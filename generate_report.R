@@ -75,6 +75,11 @@ MJ_API_SECRET  <- trim_env("MJ_API_SECRET")
 MAIL_FROM      <- trim_env("MAIL_FROM")
 MAIL_TO        <- trim_env("MAIL_TO")
 
+# --- DEBUG – key sanity check ----------------------------------------------
+cat("DEBUG key length:", nchar(SB_STORAGE_KEY), "\n")
+cat("DEBUG first 20 chars:", substr(SB_STORAGE_KEY, 1, 20), "\n")
+# ---------------------------------------------------------------------------
+
 stopifnot(
   SB_HOST  != "", SB_URL != "", SB_STORAGE_KEY != "",
   OPENAI_KEY != "", MJ_API_KEY != "", MJ_API_SECRET != "",
@@ -121,6 +126,8 @@ tweets <- twitter_raw |>
 
 df  <- tweets |> filter(tweet_type == "original")
 df2 <- tweets
+
+
 
 # 5 ── SECTION 1 – DAILY ACTIVITY SUMMARY -----------------------------------
 tweet_lines <- df |>
