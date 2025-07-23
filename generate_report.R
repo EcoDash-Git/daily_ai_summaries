@@ -235,43 +235,53 @@ Each line in **Data A** has `YYYY-MM-DD HH:MM | ER=% | tweet_text`.
 overall_summary2 <- ask_gpt(prompt2, max_tokens = 1200)
 
 # 7 ── THEMES BY ENGAGEMENT TIER --------------------------------------------
-df_tier <- df |>
-  mutate(
-    tier = cut(
-      engagement_rate,
-      breaks = quantile(engagement_rate, c(0,.33,.66,1), na.rm = TRUE),
-      labels = c("Low","Medium","High"), include.lowest = TRUE
-    )
+vec <- df$engagement_rate |> na.omit()
+
+if (length(unique(vec)) >= 3) {
+
+  # build *unique* breaks, then ensure we have one label per interval
+  q <- unique(quantile(vec, c(0, .33, .66, 1), na.rm = TRUE))
+  labs <- c("Low", "Medium", "High")[seq_len(length(q) - 1)]
+
+  df_tier <- df |>
+    mutate(tier = cut(engagement_rate,
+                      breaks = q,
+                      labels = labs,
+                      include.lowest = TRUE))
+
+  tidy_tokens <- bind_rows(
+    df_tier |> unnest_tokens(word, text),
+    df_tier |> unnest_tokens(word, text, token = "ngrams", n = 2) |>
+      separate_rows(word, sep = " ")
+  ) |>
+    filter(!word %in% c("https","t.co","rt"), !str_detect(word,"^\\d+$")) |>
+    anti_join(stop_words, by = "word")
+
+  tier_keywords <- tidy_tokens |>
+    count(tier, word, sort = TRUE) |>
+    bind_tf_idf(word, tier, n) |>
+    filter(!is.na(tier)) |>
+    group_by(tier) |>
+    slice_max(tf_idf, n = 12, with_ties = FALSE) |>
+    mutate(row = glue("{word} ({n})")) |>
+    summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
+
+  prompt3 <- glue(
+    "You are a social‑media engagement analyst.\n\n",
+    "### Keyword lists\n",
+    glue_collapse(sprintf("• %s tier → %s",
+                          tier_keywords$tier, tier_keywords$keywords), sep = "\n"),
+    "\n\n### Tasks\n",
+    "1. For each tier, name the *main theme(s)* in ≤ 100 words.\n",
+    "2. Suggest one content strategy to move tweets from Low→Medium and Medium→High."
   )
 
-tidy_tokens <- bind_rows(
-  df_tier |> unnest_tokens(word, text),
-  df_tier |> unnest_tokens(word, text, token = "ngrams", n = 2) |>
-    separate_rows(word, sep = " ")
-) |>
-  filter(!word %in% c("https","t.co","rt"), !str_detect(word,"^\\d+$")) |>
-  anti_join(stop_words, by = "word")
+  overall_summary3 <- ask_gpt(prompt3, temperature = 0.7, max_tokens = 500)
 
-tier_keywords <- tidy_tokens |>
-  count(tier, word, sort = TRUE) |>
-  bind_tf_idf(word, tier, n) |>
-  filter(!is.na(tier)) |>
-  group_by(tier) |>
-  slice_max(tf_idf, n = 12, with_ties = FALSE) |>
-  mutate(row = glue("{word} ({n})")) |>
-  summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
-
-prompt3 <- glue(
-  "You are a social‑media engagement analyst.\n\n",
-  "### Keyword lists\n",
-  glue_collapse(sprintf("• %s tier → %s",
-                        tier_keywords$tier, tier_keywords$keywords), sep = "\n"),
-  "\n\n### Tasks\n",
-  "1. For each tier, name the *main theme(s)* in ≤ 100 words.\n",
-  "2. Suggest one content strategy to move tweets from Low→Medium and Medium→High."
-)
-
-overall_summary3 <- ask_gpt(prompt3, temperature = 0.7, max_tokens = 500)
+} else {
+  # not enough variation → skip tier section
+  overall_summary3 <- "_Not enough unique engagement data today to build tiered insights._"
+}
 
 # 8 ── DAILY ROUND‑UP --------------------------------------------------------
 start_day <- floor_date(Sys.time() - hours(24), "hour")
