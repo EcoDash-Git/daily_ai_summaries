@@ -6,8 +6,8 @@
 
 # 0 ── PACKAGES ──────────────────────────────────────────────────────────────
 required <- c(
-  "tidyverse", "lubridate", "httr2", "httr", "jsonlite", "glue", "pagedown",
-  "rmarkdown", "RPostgres", "DBI", "base64enc", "tidytext"
+  "tidyverse", "lubridate", "httr2", "httr", "jsonlite", "glue",
+  "pagedown", "rmarkdown", "RPostgres", "DBI", "base64enc", "tidytext"
 )
 invisible(lapply(required, \(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg, quiet = TRUE)
@@ -101,11 +101,11 @@ twitter_raw <- DBI::dbReadTable(con, "twitter_raw") |> as_tibble()
 main_ids <- tribble(
   ~username,  ~main_id,
   "weave_db", "1206153294680403968",
-  # … (same table as before) …
+  # … (your full table here) …
   "ArweaveEco", "892752981736779776"
 )
 
-# 4 ── PRE‑PROCESS TWEETS (24‑hour window) -----------------------------------
+# 4 ── PRE‑PROCESS TWEETS (last 24 h) ----------------------------------------
 tweets <- twitter_raw |>
   left_join(main_ids, by = "username") |>
   mutate(
@@ -116,20 +116,18 @@ tweets <- twitter_raw |>
       user_id == main_id                                            ~ "original",
       TRUE                                                          ~ "other"
     ),
-    ## QUIET = TRUE avoids the warning spam & keeps bad rows as NA
     publish_dt = lubridate::ymd_hms(date, tz = "UTC", quiet = TRUE),
     text       = str_squish(text)
   ) |>
   filter(publish_dt >= Sys.time() - lubridate::ddays(1)) |>
   distinct(tweet_id, .keep_all = TRUE)
 
-df  <- tweets |> filter(tweet_type == "original")
-df2 <- tweets
+df  <- tweets |> filter(tweet_type == "original")  # originals only
+df2 <- tweets                                       # all types
 
-# ── 5. DAILY REPORT CONTENT ────────────────────────────────────────────────
-# df already holds tweets for the past 24 h
+# 5 ── DAILY REPORT CONTENT ---------------------------------------------------
 
-## 5.1  Compact tweet lines  ────────────────────────────────────────────────
+## 5.1  Compact tweet lines ---------------------------------------------------
 tweet_lines <- df |>
   mutate(
     line = glue(
@@ -143,8 +141,8 @@ tweet_lines <- df |>
 
 big_text <- paste(tweet_lines, collapse = "\n")
 
-## 5.2  Content‑type performance  (Data C)  ─────────────────────────────────
-content_tbl <- df |>
+## 5.2  Content‑type performance (Data C) ------------------------------------
+content_tbl <- df2 |>
   mutate(post_type = case_when(
     tweet_type == "quote"    ~ "Quote",
     tweet_type == "retweet"  ~ "Retweet",
@@ -163,7 +161,7 @@ content_block <- content_tbl |>
   pull(row_txt) |>
   glue_collapse(sep = "\n")
 
-## 5.3  Keyword / hashtag block  (Data D)  ──────────────────────────────────
+## 5.3  Keyword / hashtag block (Data D) -------------------------------------
 keyword_tbl <- df |>
   mutate(hashtag = str_extract_all(str_to_lower(text), "#\\w+")) |>
   unnest(hashtag) |>
@@ -173,7 +171,7 @@ keyword_tbl <- df |>
     avg_ER   = mean(engagement_rate, na.rm = TRUE),
     .groups  = "drop"
   ) |>
-  filter(n_tweets >= 2) |>           # at least 2 tweets today
+  filter(n_tweets >= 2) |>
   arrange(desc(avg_ER)) |>
   slice_head(n = 5)
 
@@ -182,7 +180,7 @@ keyword_block <- keyword_tbl |>
   pull(row_txt) |>
   glue_collapse(sep = "\n")
 
-## 5.4  Five‑number summaries  (Data B)  ────────────────────────────────────
+## 5.4  Five‑number summaries (Data B) ---------------------------------------
 num_cols <- c("like_count", "retweet_count", "reply_count",
               "view_count", "engagement_rate")
 
@@ -194,8 +192,8 @@ five_num <- df |>
   pivot_longer(everything(), names_to = "metric", values_to = "stats") |>
   glue_collapse(sep = "\n")
 
-## 5.5  Ask GPT for the *launches / activities* headline  ───────────────────
-overall_prompt <- glue(
+## 5.5  Launches / activities headline ---------------------------------------
+headline_prompt <- glue(
   "Below is a collection of tweets; each line is\n",
   "`YYYY-MM-DD HH:MM | ER=% | Tweet text | URL`.\n\n",
   "Write ONE concise bullet‑point summary …\n",
@@ -204,10 +202,9 @@ overall_prompt <- glue(
   "  **Do not wrap URL in brackets.**\n\n",
   big_text
 )
+overall_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 
-overall_summary <- ask_gpt(overall_prompt, max_tokens = 700)
-
-## 5.6  Ask GPT for numeric + content insights  ─────────────────────────────
+## 5.6  Numeric + content insights -------------------------------------------
 insight_prompt <- glue(
 "
 You are an experienced social‑media analyst.
@@ -218,14 +215,13 @@ You are an experienced social‑media analyst.
    • Median ER vs. Twitter median 0.015 %.  
    • Comment on spread/outliers (Data B only).
 
-2. **Content‑type performance** – Use Data C only.
-
+2. **Content‑type performance** – Use Data C only.  
 3. **Keyword / Hashtag trends** – 3‑5 terms with higher ER (Data D only).
 
 ### Rules
 * Bullet points ≤ 12 words.  
 * Dates as `YYYY‑MM‑DD`.  
-* Don’t invent numbers.
+* Do not invent numbers.
 
 ### Data A
 {big_text}
@@ -240,10 +236,9 @@ You are an experienced social‑media analyst.
 {keyword_block}
 "
 )
-
 overall_summary2 <- ask_gpt(insight_prompt, max_tokens = 900)
 
-## 5.7  Engagement‑tier themes (same logic as weekly)  ───────────────────────
+## 5.7  Engagement‑tier themes -----------------------------------------------
 df_tier <- df |>
   mutate(
     tier = cut(
@@ -278,27 +273,29 @@ theme_prompt <- glue(
   "You are a social‑media engagement analyst.\n\n",
   "Below are the 12 most distinctive keywords for each engagement tier:\n",
   glue_collapse(
-    sprintf(\"• %s tier → %s\", tier_keywords$tier, tier_keywords$keywords),
-    sep = \"\\n\"),
+    sprintf("• %s tier → %s",
+            tier_keywords$tier,
+            tier_keywords$keywords),
+    sep = "\n"
+  ),
   "\n\nTasks\n",
   "1. Summarise the main theme(s) per tier in ≤ 80 words.\n",
   "2. Suggest one content tip to move tweets up one tier.\n",
   "Do not invent numbers."
 )
-
 overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
 
-## 5.8  Put everything together & write markdown  ───────────────────────────
+## 5.8  Assemble markdown -----------------------------------------------------
 final_report <- paste(
-  overall_summary,    # launches / headline
+  overall_summary,   # launches / headline
   "\n\n",
-  overall_summary2,   # numeric + content insights
+  overall_summary2,  # numeric + content insights
   "\n\n",
-  overall_summary3,   # themes & strategy
+  overall_summary3,  # themes & strategy
   sep = ""
 )
 
-# escape any $ so Markdown → LaTeX (pagedown) doesn’t choke
+# escape $ so LaTeX (pagedown) is happy
 final_report <- str_replace_all(final_report, "\\$", "\\\\$")
 
 writeLines(
@@ -306,47 +303,22 @@ writeLines(
   "summary.md"
 )
 
-## 5.9  Render to PDF (same chrome_print call, with --no-sandbox) ------------
-pagedown::chrome_print("summary.md",
-                       output = "summary_full.pdf",
-                       extra_args = c("--no-sandbox"))
-
-
-
-
-# 6 ── RENDER HTML VIA R Markdown -------------------------------------------
-html_out <- "summary.html"
-rmarkdown::render(
-  input  = summary_md,
-  output_file = html_out,
-  quiet  = TRUE
+## 5.9  Render PDF ------------------------------------------------------------
+pagedown::chrome_print(
+  input      = "summary.md",
+  output     = "summary_full.pdf",
+  extra_args = c("--no-sandbox")
 )
 
-# 7 ── PRINT TO PDF (pagedown) -----------------------------------------------
-# Make sure pagedown finds Chrome; append --no-sandbox for CI
-chrome_path <- pagedown::find_chrome()
-cat("DEBUG Chrome binary:", chrome_path, "\n")
-
-tryCatch({
-  pagedown::chrome_print(
-    input       = html_out,
-    output      = "summary_full.pdf",
-    extra_args  = c("--no-sandbox")
-  )
-}, error = function(e) {
-  message("chrome_print() failed: ", e$message)
-  quit(status = 1)
-})
-
-# 8 ── VERIFY PDF EXISTS ------------------------------------------------------
+# 6 ── VERIFY PDF EXISTS ------------------------------------------------------
 if (!file.exists("summary_full.pdf")) {
   stop("❌ PDF not generated – summary_full.pdf missing")
 }
 
-# 9 ── UPLOAD TO SUPABASE -----------------------------------------------------
+# 7 ── UPLOAD TO SUPABASE -----------------------------------------------------
 object_path <- sprintf(
   "%s/summary_%s.pdf",
-  format(Sys.Date(), "%Yw%V"),         # folder YYYYwWW
+  format(Sys.Date(), "%Yw%V"),                    # folder YYYYwWW
   format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
 )
 
@@ -369,7 +341,7 @@ resp <- request(upload_url) |>
 if (resp_status(resp) >= 300) stop("Upload failed – status ", resp_status(resp))
 cat("✔ Uploaded to Supabase:", object_path, "\n")
 
-# 10 ── EMAIL VIA MAILJET -----------------------------------------------------
+# 8 ── EMAIL VIA MAILJET ------------------------------------------------------
 from_email <- if (str_detect(MAIL_FROM, "<.+@.+>"))
   str_remove_all(str_extract(MAIL_FROM, "<.+@.+>"), "[<>]") else MAIL_FROM
 from_name  <- if (str_detect(MAIL_FROM, "<.+@.+>"))
@@ -399,3 +371,4 @@ if (resp_status(mj_resp) >= 300) {
   stop("Mailjet returned status ", resp_status(mj_resp))
 }
 cat("📧  Mailjet response OK — report emailed\n")
+
