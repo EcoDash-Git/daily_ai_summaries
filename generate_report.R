@@ -126,17 +126,193 @@ tweets <- twitter_raw |>
 df  <- tweets |> filter(tweet_type == "original")
 df2 <- tweets
 
-# 5 ── ANALYSIS & MARKDOWN GENERATION ----------------------------------------
-# (replace this with your existing GPT + numeric‑insight code)
-# For illustration we just write a stub markdown file:
-summary_md <- "summary.md"
-writeLines(c(
-  "# Daily Twitter digest",
-  "",
-  paste("*Tweets analysed:*", nrow(df2)),
-  "",
-  paste("*Original tweets (last 24 h):*", nrow(df))
-), summary_md)
+# ── 5. DAILY REPORT CONTENT ────────────────────────────────────────────────
+# df already holds tweets for the past 24 h
+
+## 5.1  Compact tweet lines  ────────────────────────────────────────────────
+tweet_lines <- df |>
+  mutate(
+    line = glue(
+      "{format(date, '%Y-%m-%d %H:%M')} | ",
+      "ER={round(engagement_rate, 4)}% | ",
+      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
+      "{tweet_url}"
+    )
+  ) |>
+  pull(line)
+
+big_text <- paste(tweet_lines, collapse = "\n")
+
+## 5.2  Content‑type performance  (Data C)  ─────────────────────────────────
+content_tbl <- df |>
+  mutate(post_type = case_when(
+    tweet_type == "quote"    ~ "Quote",
+    tweet_type == "retweet"  ~ "Retweet",
+    tweet_type == "original" ~ "Original",
+    TRUE                     ~ "Other"
+  )) |>
+  group_by(post_type) |>
+  summarise(
+    avg_ER    = mean(engagement_rate,  na.rm = TRUE),
+    avg_views = mean(view_count,       na.rm = TRUE),
+    .groups   = "drop"
+  )
+
+content_block <- content_tbl |>
+  mutate(row_txt = glue("{post_type}: ER={round(avg_ER,3)}%, views={round(avg_views)}")) |>
+  pull(row_txt) |>
+  glue_collapse(sep = "\n")
+
+## 5.3  Keyword / hashtag block  (Data D)  ──────────────────────────────────
+keyword_tbl <- df |>
+  mutate(hashtag = str_extract_all(str_to_lower(text), "#\\w+")) |>
+  unnest(hashtag) |>
+  group_by(hashtag) |>
+  summarise(
+    n_tweets = n(),
+    avg_ER   = mean(engagement_rate, na.rm = TRUE),
+    .groups  = "drop"
+  ) |>
+  filter(n_tweets >= 2) |>           # at least 2 tweets today
+  arrange(desc(avg_ER)) |>
+  slice_head(n = 5)
+
+keyword_block <- keyword_tbl |>
+  mutate(row_txt = glue("{hashtag}: ER={round(avg_ER,3)}% (n={n_tweets})")) |>
+  pull(row_txt) |>
+  glue_collapse(sep = "\n")
+
+## 5.4  Five‑number summaries  (Data B)  ────────────────────────────────────
+num_cols <- c("like_count", "retweet_count", "reply_count",
+              "view_count", "engagement_rate")
+
+five_num <- df |>
+  summarise(across(all_of(num_cols), \(x) {
+    q <- quantile(x, probs = c(0, .25, .5, .75, 1), na.rm = TRUE)
+    glue("min={q[1]}, q1={q[2]}, med={q[3]}, q3={q[4]}, max={q[5]}")
+  })) |>
+  pivot_longer(everything(), names_to = "metric", values_to = "stats") |>
+  glue_collapse(sep = "\n")
+
+## 5.5  Ask GPT for the *launches / activities* headline  ───────────────────
+overall_prompt <- glue(
+  "Below is a collection of tweets; each line is\n",
+  "`YYYY-MM-DD HH:MM | ER=% | Tweet text | URL`.\n\n",
+  "Write ONE concise bullet‑point summary …\n",
+  "• **Headline** (≤ 20 words) plus the date (YYYY‑MM‑DD).\n",
+  "• Next line (indented two spaces) → first 60 characters of the tweet, then raw URL.\n",
+  "  **Do not wrap URL in brackets.**\n\n",
+  big_text
+)
+
+overall_summary <- ask_gpt(overall_prompt, max_tokens = 700)
+
+## 5.6  Ask GPT for numeric + content insights  ─────────────────────────────
+insight_prompt <- glue(
+"
+You are an experienced social‑media analyst.
+
+### Tasks for the last 24 h
+1. **Key Numeric Insights**  
+   • Highest ER, its distance to median, show tweet & date (use Data A/B).  
+   • Median ER vs. Twitter median 0.015 %.  
+   • Comment on spread/outliers (Data B only).
+
+2. **Content‑type performance** – Use Data C only.
+
+3. **Keyword / Hashtag trends** – 3‑5 terms with higher ER (Data D only).
+
+### Rules
+* Bullet points ≤ 12 words.  
+* Dates as `YYYY‑MM‑DD`.  
+* Don’t invent numbers.
+
+### Data A
+{big_text}
+
+### Data B
+{five_num}
+
+### Data C
+{content_block}
+
+### Data D
+{keyword_block}
+"
+)
+
+overall_summary2 <- ask_gpt(insight_prompt, max_tokens = 900)
+
+## 5.7  Engagement‑tier themes (same logic as weekly)  ───────────────────────
+df_tier <- df |>
+  mutate(
+    tier = cut(
+      engagement_rate,
+      breaks = quantile(engagement_rate, c(0, .33, .66, 1), na.rm = TRUE),
+      labels = c("Low", "Medium", "High"),
+      include.lowest = TRUE
+    )
+  )
+
+uni <- df_tier |> select(tier, text) |> unnest_tokens(word, text)
+bi  <- df_tier |> select(tier, text) |>
+        unnest_tokens(word, text, token = "ngrams", n = 2) |>
+        separate_rows(word, sep = " ")
+
+tidy_tokens <- bind_rows(uni, bi) |>
+  filter(
+    !word %in% c("https", "t.co", "rt"),
+    !str_detect(word, "^\\d+$")
+  ) |>
+  anti_join(tidytext::stop_words, by = "word")
+
+tier_keywords <- tidy_tokens |>
+  count(tier, word, sort = TRUE) |>
+  bind_tf_idf(word, tier, n) |>
+  group_by(tier) |>
+  slice_max(tf_idf, n = 12, with_ties = FALSE) |>
+  mutate(row = glue("{word} ({n})")) |>
+  summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
+
+theme_prompt <- glue(
+  "You are a social‑media engagement analyst.\n\n",
+  "Below are the 12 most distinctive keywords for each engagement tier:\n",
+  glue_collapse(
+    sprintf(\"• %s tier → %s\", tier_keywords$tier, tier_keywords$keywords),
+    sep = \"\\n\"),
+  "\n\nTasks\n",
+  "1. Summarise the main theme(s) per tier in ≤ 80 words.\n",
+  "2. Suggest one content tip to move tweets up one tier.\n",
+  "Do not invent numbers."
+)
+
+overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
+
+## 5.8  Put everything together & write markdown  ───────────────────────────
+final_report <- paste(
+  overall_summary,    # launches / headline
+  "\n\n",
+  overall_summary2,   # numeric + content insights
+  "\n\n",
+  overall_summary3,   # themes & strategy
+  sep = ""
+)
+
+# escape any $ so Markdown → LaTeX (pagedown) doesn’t choke
+final_report <- str_replace_all(final_report, "\\$", "\\\\$")
+
+writeLines(
+  c("# Daily Twitter Report", "", final_report),
+  "summary.md"
+)
+
+## 5.9  Render to PDF (same chrome_print call, with --no-sandbox) ------------
+pagedown::chrome_print("summary.md",
+                       output = "summary_full.pdf",
+                       extra_args = c("--no-sandbox"))
+
+
+
 
 # 6 ── RENDER HTML VIA R Markdown -------------------------------------------
 html_out <- "summary.html"
