@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ---------------------------------------------------------------------------
-# generate_report.R – Scrape, summarise, render PDF, upload to Supabase,
+# generate_report.R – Scrape, summarise, render PDF, upload to Supabase,
 #                     and email a **daily** Twitter report through Mailjet
 # ---------------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ SB_PORT        <- as.integer(trim_env("SUPABASE_PORT", "6543"))
 SB_DB          <- trim_env("SUPABASE_DB")
 SB_USER        <- trim_env("SUPABASE_USER")
 SB_PWD         <- trim_env("SUPABASE_PWD")
-SB_URL         <- trim_env("SUPABASE_URL")          # e.g. https://abcxyz.supabase.co
+SB_URL         <- trim_env("SUPABASE_URL")          # https://<ref>.supabase.co
 SB_STORAGE_KEY <- trim_env("SUPABASE_SERVICE_ROLE")
 SB_BUCKET      <- trim_env("SB_BUCKET", "daily-reports")
 
@@ -96,22 +96,22 @@ twitter_raw <- DBI::dbReadTable(con, "twitter_raw") |> as_tibble()
 
 # ── ACCOUNT → CANONICAL‑ID MAPPINGS ─────────────────────────────────────────
 main_ids <- tribble(
-  ~username,            ~main_id,
-  "weave_db",           "1206153294680403968",
+  ~username,  ~main_id,
+  "weave_db", "1206153294680403968",
   # … (same table as before) …
-  "ArweaveEco",         "892752981736779776"
+  "ArweaveEco", "892752981736779776"
 )
 
-# 4 ── PRE‑PROCESS TWEETS (24‑hour window) -----------------------------------
+# 4 ── PRE‑PROCESS TWEETS (24 h window) -------------------------------------
 tweets <- twitter_raw |>
   left_join(main_ids, by = "username") |>
   mutate(
     is_rt_text = str_detect(text, "^RT @"),
     tweet_type = case_when(
-      is_rt_text                                   ~ "retweet",
+      is_rt_text                                                    ~ "retweet",
       user_id == main_id & !is_rt_text & str_detect(text, "https://t.co") ~ "quote",
-      user_id == main_id                           ~ "original",
-      TRUE                                         ~ "other"
+      user_id == main_id                                            ~ "original",
+      TRUE                                                          ~ "other"
     ),
     publish_dt = lubridate::ymd_hms(date, tz = "UTC"),
     text       = str_squish(text)
@@ -234,7 +234,7 @@ Each line in **Data A** has `YYYY-MM-DD HH:MM | ER=% | tweet_text`.
 
 overall_summary2 <- ask_gpt(prompt2, max_tokens = 1200)
 
-# 7 ── THEMES BY ENGAGEMENT TIER (safe against low variation) ---------------
+# 7 ── THEMES BY ENGAGEMENT TIER (robust) ------------------------------------
 vec <- df$engagement_rate |> na.omit()
 
 if (length(unique(vec)) >= 3) {
@@ -336,6 +336,7 @@ pagedown::chrome_print(
   output     = "summary_full.pdf",
   extra_args = "--no-sandbox"
 )
+
 # 11 ── UPLOAD TO SUPABASE ---------------------------------------------------
 object_path <- sprintf(
   "%s/summary_%s.pdf",
@@ -360,8 +361,8 @@ resp <- request(upload_url) |>
     `Content-Type` = "application/pdf"
   ) |>
   req_body_file("summary_full.pdf") |>
-  req_error(is_error = \(x) FALSE)   # ← add this line
-  |> req_perform()
+  req_error(is_error = \(x) FALSE) |>
+  req_perform()
 
 cat("Status:", resp_status(resp), "\n")
 cat("Body  :", resp_body_string(resp, encoding = "UTF-8"), "\n")
