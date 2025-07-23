@@ -101,7 +101,7 @@ twitter_raw <- DBI::dbReadTable(con, "twitter_raw") |> as_tibble()
 main_ids <- tribble(
   ~username,  ~main_id,
   "weave_db", "1206153294680403968",
-  # … (your full table here) …
+  # … add the rest of your handles …
   "ArweaveEco", "892752981736779776"
 )
 
@@ -239,15 +239,19 @@ You are an experienced social‑media analyst.
 overall_summary2 <- ask_gpt(insight_prompt, max_tokens = 900)
 
 ## 5.7  Engagement‑tier themes -----------------------------------------------
-df_tier <- df |>
-  mutate(
-    tier = cut(
-      engagement_rate,
-      breaks = quantile(engagement_rate, c(0, .33, .66, 1), na.rm = TRUE),
-      labels = c("Low", "Medium", "High"),
-      include.lowest = TRUE
+non_na <- sum(!is.na(df$engagement_rate))
+
+if (non_na >= 3) {   # enough data → tertiles via ntile()
+  df_tier <- df |>
+    mutate(
+      tier_num = dplyr::ntile(engagement_rate, 3),
+      tier     = factor(c("Low", "Medium", "High")[tier_num],
+                        levels = c("Low", "Medium", "High"))
     )
-  )
+} else {             # not enough observations
+  df_tier <- df |>
+    mutate(tier = factor("Medium", levels = c("Low", "Medium", "High")))
+}
 
 uni <- df_tier |> select(tier, text) |> unnest_tokens(word, text)
 bi  <- df_tier |> select(tier, text) |>
@@ -275,7 +279,7 @@ theme_prompt <- glue(
   glue_collapse(
     sprintf("• %s tier → %s",
             tier_keywords$tier,
-            tier_keywords$keywords),
+            tier_keywords$keywords %||% "No keywords (insufficient data)"),
     sep = "\n"
   ),
   "\n\nTasks\n",
@@ -371,4 +375,3 @@ if (resp_status(mj_resp) >= 300) {
   stop("Mailjet returned status ", resp_status(mj_resp))
 }
 cat("📧  Mailjet response OK — report emailed\n")
-
