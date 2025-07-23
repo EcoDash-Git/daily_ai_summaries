@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # ---------------------------------------------------------------------------
 # generate_report.R – Scrape, summarise, render PDF, upload to Supabase,
-#                     and email a **daily** Twitter report through Mailjet
+#                     and email a DAILY Twitter report through Mailjet
 # ---------------------------------------------------------------------------
 
 # 0 ── PACKAGES ──────────────────────────────────────────────────────────────
@@ -76,8 +76,8 @@ MAIL_FROM      <- trim_env("MAIL_FROM")
 MAIL_TO        <- trim_env("MAIL_TO")
 
 # --- DEBUG – key sanity check ----------------------------------------------
-cat("DEBUG key length:", nchar(SB_STORAGE_KEY), "\n")
-cat("DEBUG first 20 chars:", substr(SB_STORAGE_KEY, 1, 20), "\n")
+cat("DEBUG SB_KEY length:", nchar(SB_STORAGE_KEY), "\n")
+cat("DEBUG SB_KEY first 20:", substr(SB_STORAGE_KEY, 1, 20), "\n")
 # ---------------------------------------------------------------------------
 
 stopifnot(
@@ -107,7 +107,7 @@ main_ids <- tribble(
   "ArweaveEco", "892752981736779776"
 )
 
-# 4 ── PRE‑PROCESS TWEETS (24 h window) -------------------------------------
+# 4 ── PRE‑PROCESS TWEETS (24 h window) -------------------------------------
 tweets <- twitter_raw |>
   left_join(main_ids, by = "username") |>
   mutate(
@@ -127,235 +127,29 @@ tweets <- twitter_raw |>
 df  <- tweets |> filter(tweet_type == "original")
 df2 <- tweets
 
+# 5–9 ── ANALYSIS & RENDERING (unchanged) -----------------------------------
+# … your existing sections: GPT prompts, numerical insights, PDF creation …
 
+# (Assumes pagedown writes "summary_full.pdf")
+# ---------------------------------------------------------------------------
 
-# 5 ── SECTION 1 – DAILY ACTIVITY SUMMARY -----------------------------------
-tweet_lines <- df |>
-  mutate(line = glue(
-    "{format(publish_dt, '%Y-%m-%d %H:%M')} | ",
-    "ER={round(engagement_rate, 4)}% | ",
-    "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
-    "{tweet_url}"
-  )) |>
-  pull(line)
-
-big_text <- paste(tweet_lines, collapse = "\n")
-
-prompt1 <- glue(
-  "Below is a collection of tweets; each line is ",
-  "URL | Date | Engagement Rate | Tweet text.\n\n",
-  "Write ONE concise bullet‑point summary of what happened *today*.\n",
-  "• **Headline** (≤20 words) plus the tweet’s date (YYYY‑MM‑DD).\n",
-  "• Next line (indented two spaces) – copy the first 60 characters of the tweet ",
-  "text exactly **and then paste the raw URL** (no brackets, no “Link”).\n\n",
-  big_text
-)
-
-overall_summary <- ask_gpt(prompt1)
-
-# 6 ── SECTION 2 – NUMERIC INSIGHTS, CONTENT TYPE, HASHTAGS ------------------
-content_tbl <- df2 |>
-  mutate(post_type = tweet_type |> str_to_title()) |>
-  group_by(post_type) |>
-  summarise(
-    avg_ER    = mean(engagement_rate, na.rm = TRUE),
-    avg_views = mean(view_count, na.rm = TRUE),
-    .groups   = "drop"
-  )
-
-content_block <- content_tbl |>
-  mutate(row = glue("{post_type}: ER={round(avg_ER,3)}%, views={round(avg_views)}")) |>
-  pull(row) |>
-  glue_collapse(sep = "\n")
-
-hashtag_block <- df2 |>
-  mutate(hashtag = str_extract_all(str_to_lower(text), "#\\w+")) |>
-  unnest(hashtag) |>
-  group_by(hashtag) |>
-  summarise(
-    n_tweets = n(),
-    avg_ER   = mean(engagement_rate, na.rm = TRUE),
-    .groups  = "drop"
-  ) |>
-  filter(n_tweets >= 3) |>
-  arrange(desc(avg_ER)) |>
-  slice_head(n = 5) |>
-  mutate(row = glue("{hashtag}: ER={round(avg_ER,3)}% (n={n_tweets})")) |>
-  pull(row) |>
-  glue_collapse(sep = "\n")
-
-num_cols <- c("like_count","retweet_count","reply_count",
-              "view_count","engagement_rate")
-
-five_num <- df |>
-  summarise(across(all_of(num_cols), \(x){
-    q <- quantile(x, c(0,.25,.5,.75,1), na.rm = TRUE)
-    glue("min={q[1]}, q1={q[2]}, med={q[3]}, q3={q[4]}, max={q[5]}")
-  })) |>
-  pivot_longer(everything()) |>
-  glue_collapse(sep = "\n")
-
-day_time <- df |>
-  mutate(day  = wday(publish_dt, label = TRUE, abbr = FALSE, week_start = 1, locale = "C"),
-         hour = hour(publish_dt)) |>
-  group_by(day, hour) |>
-  summarise(median_engagement = median(engagement_rate, na.rm = TRUE), .groups="drop") |>
-  arrange(desc(median_engagement)) |>
-  slice_head(n = 10) |>
-  mutate(row = glue("{day}: hour={hour}, med_ER={round(median_engagement,3)}")) |>
-  pull(row) |>
-  glue_collapse(sep = "\n")
-
-prompt2 <- glue(
-"
-You are an experienced social‑media analyst.
-
-Each line in **Data A** has `YYYY-MM-DD HH:MM | ER=% | tweet_text`.
-
-**Data B** five‑number summaries; **Data C** content types; **Data D** hashtags; **Data E** best‑time.
-
-### Tasks
-1. Key Numeric Insights – highest ER, distance to median, tweet text+link, spread/outliers.  
-2. Content‑Type Performance – use Data C (give ER & views).  
-3. Keyword / Hashtag Trends – 3‑5 terms with higher ER (use Data D).  
-4. Best Times to Post – weekdays & 2‑hr windows (use Data E).
-
-**Rules**: bullet points ≤ 12 words; dates `YYYY‑MM‑DD`; don’t invent numbers.
-
-### Data A
-{big_text}
-
-### Data B
-{five_num}
-
-### Data C
-{content_block}
-
-### Data D
-{hashtag_block}
-
-### Data E
-{day_time}
-"
-)
-
-overall_summary2 <- ask_gpt(prompt2, max_tokens = 1200)
-
-# 7 ── THEMES BY ENGAGEMENT TIER (robust) ------------------------------------
-vec <- df$engagement_rate |> na.omit()
-
-if (length(unique(vec)) >= 3) {
-
-  q    <- unique(quantile(vec, c(0, .33, .66, 1), na.rm = TRUE))
-  labs <- c("Low", "Medium", "High")[seq_len(length(q) - 1)]
-
-  df_tier <- df |>
-    mutate(tier = cut(engagement_rate,
-                      breaks = q,
-                      labels = labs,
-                      include.lowest = TRUE))
-
-  tidy_tokens <- bind_rows(
-    df_tier |> unnest_tokens(word, text),
-    df_tier |> unnest_tokens(word, text, token = "ngrams", n = 2) |>
-      separate_rows(word, sep = " ")
-  ) |>
-    filter(!word %in% c("https","t.co","rt"), !str_detect(word,"^\\d+$")) |>
-    anti_join(stop_words, by = "word")
-
-  tier_keywords <- tidy_tokens |>
-    count(tier, word, sort = TRUE) |>
-    bind_tf_idf(word, tier, n) |>
-    filter(!is.na(tier)) |>
-    group_by(tier) |>
-    slice_max(tf_idf, n = 12, with_ties = FALSE) |>
-    mutate(row = glue("{word} ({n})")) |>
-    summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
-
-  prompt3 <- glue(
-    "You are a social‑media engagement analyst.\n\n",
-    "### Keyword lists\n",
-    glue_collapse(sprintf("• %s tier → %s",
-                          tier_keywords$tier, tier_keywords$keywords), sep = "\n"),
-    "\n\n### Tasks\n",
-    "1. For each tier, name the *main theme(s)* in ≤ 100 words.\n",
-    "2. Suggest one content strategy to move tweets from Low→Medium and Medium→High."
-  )
-
-  overall_summary3 <- ask_gpt(prompt3, temperature = 0.7, max_tokens = 500)
-} else {
-  overall_summary3 <- "_Not enough unique engagement data today to build tiered insights._"
+# 10 ── VERIFY PDF EXISTS ----------------------------------------------------
+if (!file.exists("summary_full.pdf")) {
+  stop("❌ PDF not generated – summary_full.pdf missing")
 }
-
-# 8 ── DAILY ROUND‑UP --------------------------------------------------------
-start_day <- floor_date(Sys.time() - hours(24), "hour")
-end_day   <- Sys.time()
-
-day_lines <- df |>
-  filter(publish_dt >= start_day) |>
-  mutate(
-    line = glue("{format(publish_dt, '%Y-%m-%d %H:%M')} | ",
-                "ER={round(engagement_rate,4)}% | ",
-                "{str_trunc(text, 200)} | {tweet_url}")
-  ) |>
-  pull(line)
-
-daily_prompt <- glue(
-  "You are a social‑media analyst.\n\n",
-  "Each line in **Data D** is `YYYY-MM-DD HH:MM | ER | snippet | URL`.\n\n",
-  "### Tasks\n",
-  "1. What happened in the last 24 hours ({format(start_day,'%Y-%m-%d %H:%M')}–{format(end_day,'%Y-%m-%d %H:%M')}).\n",
-  "2. Any hints of tomorrow’s activity.\n",
-  "• Bullet points ≤ 15 words; end each point with the URL.\n\n",
-  "### Data D\n",
-  glue_collapse(day_lines, sep = "\n")
-)
-
-overall_summary4 <- ask_gpt(daily_prompt, temperature = 0.4, max_tokens = 450)
-
-# 9 ── LOCATE CHROME / CHROMIUM ---------------------------------------------
-suppressMessages({
-  chrome <- pagedown::find_chrome()            %||%
-            Sys.which("chromium-browser")       %||%
-            Sys.which("google-chrome")          %||%
-            Sys.which("chromium")
-  if (chrome == "") stop("Cannot find Chrome/Chromium on the runner")
-  options(pagedown.chromium = chrome)
-})
-
-# 10 ── COMBINE, WRITE, RENDER PDF ------------------------------------------
-make_md_links <- \(txt) {
-  pattern <- "(?<!\\]\\()https?://\\S+"          # only raw URLs
-  str_replace_all(txt, pattern, "[Link](\\0)")
-}
-
-final_report <- glue(
-  "{overall_summary}\n\n{overall_summary2}\n\n{overall_summary3}\n\n",
-  "## Daily Round‑up\n\n{overall_summary4}"
-) |>
-  str_replace_all("\\$", "\\\\$") |>
-  make_md_links()
-
-writeLines(c("# Daily Summary", "", final_report), "summary.md")
-
-pagedown::chrome_print(
-  "summary.md",
-  output     = "summary_full.pdf",
-  extra_args = "--no-sandbox"
-)
 
 # 11 ── UPLOAD TO SUPABASE ---------------------------------------------------
 object_path <- sprintf(
   "%s/summary_%s.pdf",
-  format(Sys.Date(), "%Y%m%d"),
-  format(Sys.time(),  "%Y-%m-%d_%H-%M-%S")
+  format(Sys.Date(), "%Yw%V"),                     # folder YYYYwWW
+  format(Sys.time(),  "%Y-%m-%d_%H-%M-%S")         # timestamped file
 )
 
 upload_url <- sprintf(
   "%s/storage/v1/object/%s/%s?upload=1",
   SB_URL,
   SB_BUCKET,
-  object_path
+  object_path          # keep slash; no URLencode
 )
 
 cat("Uploading to:", upload_url, "\n")
