@@ -344,7 +344,7 @@ object_path <- sprintf(
   format(Sys.time(),  "%Y-%m-%d_%H-%M-%S")
 )
 
-# leave '/' un‑encoded so folder structure is preserved
+# keep the slash, don’t URL‑encode it
 upload_url <- sprintf(
   "%s/storage/v1/object/%s/%s?upload=1",
   SB_URL,
@@ -352,6 +352,64 @@ upload_url <- sprintf(
   object_path
 )
 
-resp <- request(upload
-::contentReference[oaicite:0]{index=0}
+cat("Uploading to:", upload_url, "\n")   # ← optional debug
 
+resp <- request(upload_url) |>
+  req_method("POST") |>
+  req_headers(
+    Authorization = sprintf("Bearer %s", SB_STORAGE_KEY),
+    `x-upsert`     = "true",
+    `Content-Type` = "application/pdf"
+  ) |>
+  req_body_file("summary_full.pdf") |>
+  req_perform()
+
+if (resp_status(resp) >= 300) {
+  cat("Supabase said:\n", resp_body_string(resp, encoding = "UTF-8"), "\n")
+  stop(sprintf("Upload failed – status %s", resp_status(resp)))
+} else {
+  cat("✔ Uploaded to Supabase:", object_path, "\n")
+}
+
+# 12 ── EMAIL VIA MAILJET ----------------------------------------------------
+show_mj_error <- function(resp) {
+  cat("\n↪ Mailjet response body:\n",
+      resp_body_string(resp, encoding = "UTF-8"), "\n\n")
+}
+
+from_email <- if (str_detect(MAIL_FROM, "<.+@.+>")) {
+  str_remove_all(str_extract(MAIL_FROM, "<.+@.+>"), "[<>]")
+} else {
+  MAIL_FROM
+}
+
+from_name  <- if (str_detect(MAIL_FROM, "<.+@.+>")) {
+  str_trim(str_remove(MAIL_FROM, "<.+@.+>$"))
+} else {
+  "Report Bot"
+}
+
+mj_resp <- request("https://api.mailjet.com/v3.1/send") |>
+  req_auth_basic(MJ_API_KEY, MJ_API_SECRET) |>
+  req_body_json(list(
+    Messages = list(list(
+      From      = list(Email = from_email, Name = from_name),
+      To        = list(list(Email = MAIL_TO)),
+      Subject   = "Daily Twitter Report",
+      TextPart  = "Attached you'll find the daily report in PDF.",
+      Attachments = list(list(
+        ContentType   = "application/pdf",
+        Filename      = "daily_report.pdf",
+        Base64Content = base64enc::base64encode("summary_full.pdf")
+      ))
+    ))
+  )) |>
+  req_error(is_error = \(x) FALSE) |>
+  req_perform()
+
+if (resp_status(mj_resp) >= 300) {
+  show_mj_error(mj_resp)
+  stop(sprintf("Mailjet returned status %s", resp_status(mj_resp)))
+} else {
+  cat("📧  Mailjet response OK — report emailed\n")
+}
