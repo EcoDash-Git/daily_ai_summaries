@@ -336,7 +336,6 @@ pagedown::chrome_print(
   output     = "summary_full.pdf",
   extra_args = "--no-sandbox"
 )
-
 # 11 ── UPLOAD TO SUPABASE ---------------------------------------------------
 object_path <- sprintf(
   "%s/summary_%s.pdf",
@@ -344,7 +343,6 @@ object_path <- sprintf(
   format(Sys.time(),  "%Y-%m-%d_%H-%M-%S")
 )
 
-# keep the slash, don’t URL‑encode it
 upload_url <- sprintf(
   "%s/storage/v1/object/%s/%s?upload=1",
   SB_URL,
@@ -352,7 +350,7 @@ upload_url <- sprintf(
   object_path
 )
 
-cat("Uploading to:", upload_url, "\n")   # ← optional debug
+cat("Uploading to:", upload_url, "\n")
 
 resp <- request(upload_url) |>
   req_method("POST") |>
@@ -362,10 +360,13 @@ resp <- request(upload_url) |>
     `Content-Type` = "application/pdf"
   ) |>
   req_body_file("summary_full.pdf") |>
-  req_perform()
+  req_error(is_error = \(x) FALSE)   # ← add this line
+  |> req_perform()
+
+cat("Status:", resp_status(resp), "\n")
+cat("Body  :", resp_body_string(resp, encoding = "UTF-8"), "\n")
 
 if (resp_status(resp) >= 300) {
-  cat("Supabase said:\n", resp_body_string(resp, encoding = "UTF-8"), "\n")
   stop(sprintf("Upload failed – status %s", resp_status(resp)))
 } else {
   cat("✔ Uploaded to Supabase:", object_path, "\n")
