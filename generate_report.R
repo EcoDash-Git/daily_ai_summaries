@@ -230,12 +230,14 @@ five_num <- df |>
 
 ## 5.5  Launches / activities headline ---------------------------------------
 headline_prompt <- glue(
-  "Below is a collection of tweets; each line is\n",
-  "`YYYY-MM-DD HH:MM | ER=% | Tweet text | URL`.\n\n",
-  "Write ONE concise bullet‑point summary …\n",
-  "• **Headline** (≤ 20 words) plus the date (YYYY‑MM‑DD).\n",
-  "• Next line (indented two spaces) → first 60 characters of the tweet, then raw URL.\n",
-  "  **Do not wrap URL in brackets.**\n\n",
+  "Below is a collection of tweets; each line is ",
+  "URL | Date | Engagement Rate | Tweet text.\n\n",
+  "Write ONE concise bullet‑point summary of all concrete activities, events, ",
+  "and product launches mentioned across the entire set.\n",
+  "• **Headline** (≤20 words) plus the tweet’s date (YYYY‑MM‑DD).\n",
+  "• Next line (indented two spaces) – copy the first 60 characters of the tweet ",
+  "text exactly **and then paste the raw URL**. **Do *not* wrap the URL in brackets ",
+  "or add the word “Link”.**\n\n",
   big_text
 )
 overall_summary <- ask_gpt(headline_prompt, max_tokens = 700)
