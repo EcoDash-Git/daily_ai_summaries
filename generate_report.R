@@ -375,3 +375,4 @@ if (resp_status(mj_resp) >= 300) {
   stop("Mailjet returned status ", resp_status(mj_resp))
 }
 cat("📧  Mailjet response OK — report emailed\n")
+
