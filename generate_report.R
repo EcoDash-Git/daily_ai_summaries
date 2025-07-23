@@ -64,20 +64,20 @@ SB_PORT        <- as.integer(trim_env("SUPABASE_PORT", "6543"))
 SB_DB          <- trim_env("SUPABASE_DB")
 SB_USER        <- trim_env("SUPABASE_USER")
 SB_PWD         <- trim_env("SUPABASE_PWD")
-SB_URL         <- trim_env("SUPABASE_URL")          # https://<ref>.supabase.co
+SB_URL         <- trim_env("SUPABASE_URL")          # e.g. https://abcxyz.supabase.co
 SB_STORAGE_KEY <- trim_env("SUPABASE_SERVICE_ROLE")
-SB_BUCKET      <- trim_env("SB_BUCKET", "daily-reports")   # <─ default changed
+SB_BUCKET      <- trim_env("SB_BUCKET", "daily-reports")
 
 OPENAI_KEY     <- trim_env("OPENAI_API_KEY")
 
 MJ_API_KEY     <- trim_env("MJ_API_KEY")
 MJ_API_SECRET  <- trim_env("MJ_API_SECRET")
-MAIL_FROM      <- trim_env("MAIL_FROM")             # "José Peña <jgpena@uc.cl>" or bare address
-MAIL_TO        <- trim_env("MAIL_TO")               # "ecotools@arweave.org.com"
+MAIL_FROM      <- trim_env("MAIL_FROM")
+MAIL_TO        <- trim_env("MAIL_TO")
 
 stopifnot(
-  SB_HOST  != "", OPENAI_KEY != "",
-  MJ_API_KEY != "", MJ_API_SECRET != "",
+  SB_HOST  != "", SB_URL != "", SB_STORAGE_KEY != "",
+  OPENAI_KEY != "", MJ_API_KEY != "", MJ_API_SECRET != "",
   MAIL_FROM != "", MAIL_TO != ""
 )
 
@@ -94,7 +94,7 @@ con <- DBI::dbConnect(
 
 twitter_raw <- DBI::dbReadTable(con, "twitter_raw") |> as_tibble()
 
-# ── FULL LIST OF ACCOUNT → CANONICAL‑ID MAPPINGS ────────────────────────────
+# ── ACCOUNT → CANONICAL‑ID MAPPINGS ─────────────────────────────────────────
 main_ids <- tribble(
   ~username,            ~main_id,
   "weave_db",           "1206153294680403968",
@@ -116,13 +116,13 @@ tweets <- twitter_raw |>
     publish_dt = lubridate::ymd_hms(date, tz = "UTC"),
     text       = str_squish(text)
   ) |>
-  filter(publish_dt >= Sys.time() - lubridate::ddays(1)) |>   # <─ 24 h look‑back
+  filter(publish_dt >= Sys.time() - lubridate::ddays(1)) |>
   distinct(tweet_id, .keep_all = TRUE)
 
 df  <- tweets |> filter(tweet_type == "original")
 df2 <- tweets
 
-# 5 ── SECTION 1 – LAUNCH / ACTIVITY SUMMARY ---------------------------------
+# 5 ── SECTION 1 – DAILY ACTIVITY SUMMARY -----------------------------------
 tweet_lines <- df |>
   mutate(line = glue(
     "{format(publish_dt, '%Y-%m-%d %H:%M')} | ",
@@ -234,13 +234,12 @@ Each line in **Data A** has `YYYY-MM-DD HH:MM | ER=% | tweet_text`.
 
 overall_summary2 <- ask_gpt(prompt2, max_tokens = 1200)
 
-# 7 ── THEMES BY ENGAGEMENT TIER --------------------------------------------
+# 7 ── THEMES BY ENGAGEMENT TIER (safe against low variation) ---------------
 vec <- df$engagement_rate |> na.omit()
 
 if (length(unique(vec)) >= 3) {
 
-  # build *unique* breaks, then ensure we have one label per interval
-  q <- unique(quantile(vec, c(0, .33, .66, 1), na.rm = TRUE))
+  q    <- unique(quantile(vec, c(0, .33, .66, 1), na.rm = TRUE))
   labs <- c("Low", "Medium", "High")[seq_len(length(q) - 1)]
 
   df_tier <- df |>
@@ -277,9 +276,7 @@ if (length(unique(vec)) >= 3) {
   )
 
   overall_summary3 <- ask_gpt(prompt3, temperature = 0.7, max_tokens = 500)
-
 } else {
-  # not enough variation → skip tier section
   overall_summary3 <- "_Not enough unique engagement data today to build tiered insights._"
 }
 
@@ -343,67 +340,18 @@ pagedown::chrome_print(
 # 11 ── UPLOAD TO SUPABASE ---------------------------------------------------
 object_path <- sprintf(
   "%s/summary_%s.pdf",
-  format(Sys.Date(), "%Y%m%d"),                        # <─ folder per day
+  format(Sys.Date(), "%Y%m%d"),
   format(Sys.time(),  "%Y-%m-%d_%H-%M-%S")
 )
 
+# leave '/' un‑encoded so folder structure is preserved
 upload_url <- sprintf(
   "%s/storage/v1/object/%s/%s?upload=1",
-  SB_URL, SB_BUCKET, URLencode(object_path, TRUE)
+  SB_URL,
+  SB_BUCKET,
+  object_path
 )
 
-request(upload_url) |>
-  req_method("POST") |>
-  req_headers(
-    Authorization = sprintf("Bearer %s", SB_STORAGE_KEY),
-    "x-upsert"     = "true",
-    "Content-Type" = "application/pdf"
-  ) |>
-  req_body_file("summary_full.pdf") |>
-  req_perform() |>
-  resp_check_status()
+resp <- request(upload
+::contentReference[oaicite:0]{index=0}
 
-cat("✔ Uploaded to Supabase:", object_path, "\n")
-
-# 12 ── EMAIL VIA MAILJET ----------------------------------------------------
-show_mj_error <- function(resp) {
-  cat("\n↪ Mailjet response body:\n",
-      resp_body_string(resp, encoding = "UTF-8"), "\n\n")
-}
-
-from_email <- if (str_detect(MAIL_FROM, "<.+@.+>")) {
-  str_remove_all(str_extract(MAIL_FROM, "<.+@.+>"), "[<>]")
-} else {
-  MAIL_FROM
-}
-
-from_name  <- if (str_detect(MAIL_FROM, "<.+@.+>")) {
-  str_trim(str_remove(MAIL_FROM, "<.+@.+>$"))
-} else {
-  "Report Bot"
-}
-
-mj_resp <- request("https://api.mailjet.com/v3.1/send") |>
-  req_auth_basic(MJ_API_KEY, MJ_API_SECRET) |>
-  req_body_json(list(
-    Messages = list(list(
-      From      = list(Email = from_email, Name = from_name),
-      To        = list(list(Email = MAIL_TO)),
-      Subject   = "Daily Twitter Report",            # <─ updated
-      TextPart  = "Attached you'll find the daily report in PDF.",
-      Attachments = list(list(
-        ContentType   = "application/pdf",
-        Filename      = "daily_report.pdf",          # <─ updated
-        Base64Content = base64enc::base64encode("summary_full.pdf")
-      ))
-    ))
-  )) |>
-  req_error(is_error = \(x) FALSE) |>
-  req_perform()
-
-if (resp_status(mj_resp) >= 300) {
-  show_mj_error(mj_resp)
-  stop(sprintf("Mailjet returned status %s", resp_status(mj_resp)))
-} else {
-  cat("📧  Mailjet response OK — report emailed\n")
-}
