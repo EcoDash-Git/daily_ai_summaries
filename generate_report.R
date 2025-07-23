@@ -277,53 +277,65 @@ overall_summary2 <- ask_gpt(insight_prompt, max_tokens = 900)
 ## 5.7  Engagement‑tier themes -----------------------------------------------
 non_na <- sum(!is.na(df$engagement_rate))
 
-if (non_na >= 3) {   # enough data → tertiles via ntile()
-  df_tier <- df |>
+if (non_na >= 3) {                   # enough data → tertiles via ntile()
+  df_tier <- df %>%
     mutate(
       tier_num = dplyr::ntile(engagement_rate, 3),
       tier     = factor(c("Low", "Medium", "High")[tier_num],
                         levels = c("Low", "Medium", "High"))
     )
-} else {             # not enough observations
-  df_tier <- df |>
+} else {                             # not enough observations
+  df_tier <- df %>%
     mutate(tier = factor("Medium", levels = c("Low", "Medium", "High")))
 }
 
-uni <- df_tier |> select(tier, text) |> unnest_tokens(word, text)
-bi  <- df_tier |> select(tier, text) |>
-        unnest_tokens(word, text, token = "ngrams", n = 2) |>
+# ── tokenise & TF‑IDF -------------------------------------------------------
+uni <- df_tier %>% select(tier, text) %>% unnest_tokens(word, text)
+bi  <- df_tier %>% select(tier, text) %>%
+        unnest_tokens(word, text, token = "ngrams", n = 2) %>%
         separate_rows(word, sep = " ")
 
-tidy_tokens <- bind_rows(uni, bi) |>
+tidy_tokens <- bind_rows(uni, bi) %>%
   filter(
     !word %in% c("https", "t.co", "rt"),
     !str_detect(word, "^\\d+$")
-  ) |>
+  ) %>%
   anti_join(tidytext::stop_words, by = "word")
 
-tier_keywords <- tidy_tokens |>
-  count(tier, word, sort = TRUE) |>
-  bind_tf_idf(word, tier, n) |>
-  group_by(tier) |>
-  slice_max(tf_idf, n = 12, with_ties = FALSE) |>
-  mutate(row = glue("{word} ({n})")) |>
+tier_keywords <- tidy_tokens %>%
+  count(tier, word, sort = TRUE) %>%
+  bind_tf_idf(word, tier, n) %>%
+  group_by(tier) %>%
+  slice_max(tf_idf, n = 12, with_ties = FALSE) %>%
+  mutate(row = glue("{word} ({n})")) %>%
   summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
 
-theme_prompt <- glue(
-  "You are a social‑media engagement analyst.\n\n",
-  "Below are the 12 most distinctive keywords for each engagement tier:\n",
-  glue_collapse(
+# ── build the bullet lines safely ------------------------------------------
+if (nrow(tier_keywords) == 0) {
+  theme_lines <- "• No tiers – insufficient data"
+} else {
+  theme_lines <- glue_collapse(
     sprintf("• %s tier → %s",
             tier_keywords$tier,
-            tier_keywords$keywords %||% "No keywords (insufficient data)"),
-    sep = "\n"
-  ),
+            ifelse(tier_keywords$keywords == "",
+                   "No keywords (insufficient data)",
+                   tier_keywords$keywords)),
+    sep = "\n")
+}
+
+# ── GPT prompt --------------------------------------------------------------
+theme_prompt <- glue(
+  "You are a social‑media engagement analyst.\n\n",
+  "Below are distinctive keywords for each engagement tier:\n",
+  theme_lines,
   "\n\nTasks\n",
   "1. Summarise the main theme(s) per tier in ≤ 80 words.\n",
   "2. Suggest one content tip to move tweets up one tier.\n",
   "Do not invent numbers."
 )
+
 overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
+
 
 ## 5.8  Assemble markdown -----------------------------------------------------
 final_report <- paste(
