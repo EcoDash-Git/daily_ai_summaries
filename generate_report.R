@@ -367,6 +367,18 @@ writeLines(c("# Daily Twitter Report", "", final_report), "summary.md")
 
 
 ## 5.9  Render PDF ------------------------------------------------------------
+# Tell pagedown exactly where Chrome is
+chrome_path <- Sys.getenv("CHROME_BIN")
+if (!nzchar(chrome_path)) chrome_path <- pagedown::find_chrome()  # fallback
+
+pagedown::chrome_print(
+  input      = "summary.md",
+  output     = "summary_full.pdf",
+  browser    = chrome_path,          # ← NEW
+  extra_args = c("--no-sandbox")
+)
+
+
 pagedown::chrome_print(
   input      = "summary.md",
   output     = "summary_full.pdf",
