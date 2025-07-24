@@ -340,22 +340,31 @@ overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
 
 
 ## 5.8  Assemble markdown -----------------------------------------------------
+
+# -- helper to drop duplicate “raw URL  (raw URL)” ---------------------------
+dedup_links <- function(txt) {
+  # collapse:   https://foo  (https://foo)  ->  https://foo
+  pattern <- "(https?://\\S+)\\s*\\(\\1\\)"
+  stringr::str_replace_all(txt, pattern, "\\1")
+}
+
 final_report <- paste(
-  overall_summary,   # launches / headline
+  "## Launches & Activities",            # section subtitle
+  overall_summary  |> dedup_links(),
   "\n\n",
-  overall_summary2,  # numeric + content insights
+  "## Numeric & Content Insights",
+  overall_summary2 |> dedup_links(),
   "\n\n",
-  overall_summary3,  # themes & strategy
-  sep = ""
+  "## Engagement Themes & Tips",
+  overall_summary3 |> dedup_links(),
+  sep = "\n\n"
 )
 
 # escape $ so LaTeX (pagedown) is happy
-final_report <- str_replace_all(final_report, "\\$", "\\\\$")
+final_report <- stringr::str_replace_all(final_report, "\\$", "\\\\$")
 
-writeLines(
-  c("# Daily Twitter Report", "", final_report),
-  "summary.md"
-)
+writeLines(c("# Daily Twitter Report", "", final_report), "summary.md")
+
 
 ## 5.9  Render PDF ------------------------------------------------------------
 pagedown::chrome_print(
