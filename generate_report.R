@@ -341,12 +341,22 @@ overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
 
 ## 5.8  Assemble markdown -----------------------------------------------------
 
-# -- helper to drop duplicate “raw URL  (raw URL)” ---------------------------
+# -- helper to drop duplicate URLs ------------------------------------------
 dedup_links <- function(txt) {
-  # collapse:   https://foo  (https://foo)  ->  https://foo
-  pattern <- "(https?://\\S+)\\s*\\(\\1\\)"
-  stringr::str_replace_all(txt, pattern, "\\1")
+  # 1) turn “…\n(URL)” into “… URL”  (handles the newline case)
+  txt <- stringr::str_replace_all(
+    txt,
+    "(?m)\\n\\((https?://\\S+)\\)",   # (?m) = multiline
+    " \\1"
+  )
+  # 2) collapse any residual “URL  URL” on the same line
+  stringr::str_replace_all(
+    txt,
+    "(https?://\\S+)\\s+\\1",
+    "\\1"
+  )
 }
+
 
 final_report <- paste(
   "## Launches & Activities",            # section subtitle
