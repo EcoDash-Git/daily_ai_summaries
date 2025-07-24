@@ -378,13 +378,6 @@ pagedown::chrome_print(
   extra_args = c("--no-sandbox")
 )
 
-
-pagedown::chrome_print(
-  input      = "summary.md",
-  output     = "summary_full.pdf",
-  extra_args = c("--no-sandbox")
-)
-
 # 6 ── VERIFY PDF EXISTS ------------------------------------------------------
 if (!file.exists("summary_full.pdf")) {
   stop("❌ PDF not generated – summary_full.pdf missing")
