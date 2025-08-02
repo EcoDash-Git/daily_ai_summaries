@@ -159,11 +159,10 @@ tweets <- twitter_raw |>
   distinct(tweet_id, .keep_all = TRUE)
 
 df  <- tweets |> filter(tweet_type == "original")  # originals only
-df2 <- tweets                                       # all types
 
 # 5 ── DAILY REPORT CONTENT ---------------------------------------------------
 
-## 5.1  Compact tweet lines ---------------------------------------------------
+## 5.1  compact tweet lines
 tweet_lines <- df |>
   mutate(
     line = glue(
@@ -177,235 +176,51 @@ tweet_lines <- df |>
 
 big_text <- paste(tweet_lines, collapse = "\n")
 
-## 5.2  Content‑type performance (Data C) ------------------------------------
-content_tbl <- df2 |>
-  mutate(post_type = case_when(
-    tweet_type == "quote"    ~ "Quote",
-    tweet_type == "retweet"  ~ "Retweet",
-    tweet_type == "original" ~ "Original",
-    TRUE                     ~ "Other"
-  )) |>
-  group_by(post_type) |>
-  summarise(
-    avg_ER    = mean(engagement_rate,  na.rm = TRUE),
-    avg_views = mean(view_count,       na.rm = TRUE),
-    .groups   = "drop"
-  )
-
-content_block <- content_tbl |>
-  mutate(row_txt = glue("{post_type}: ER={round(avg_ER,3)}%, views={round(avg_views)}")) |>
-  pull(row_txt) |>
-  glue_collapse(sep = "\n")
-
-## 5.3  Keyword / hashtag block (Data D) -------------------------------------
-keyword_tbl <- df |>
-  mutate(hashtag = str_extract_all(str_to_lower(text), "#\\w+")) |>
-  unnest(hashtag) |>
-  group_by(hashtag) |>
-  summarise(
-    n_tweets = n(),
-    avg_ER   = mean(engagement_rate, na.rm = TRUE),
-    .groups  = "drop"
-  ) |>
-  filter(n_tweets >= 2) |>
-  arrange(desc(avg_ER)) |>
-  slice_head(n = 5)
-
-keyword_block <- keyword_tbl |>
-  mutate(row_txt = glue("{hashtag}: ER={round(avg_ER,3)}% (n={n_tweets})")) |>
-  pull(row_txt) |>
-  glue_collapse(sep = "\n")
-
-## 5.4  Five‑number summaries (Data B) ---------------------------------------
-num_cols <- c("like_count", "retweet_count", "reply_count",
-              "view_count", "engagement_rate")
-
-five_num <- df |>
-  summarise(across(all_of(num_cols), \(x) {
-    q <- quantile(x, probs = c(0, .25, .5, .75, 1), na.rm = TRUE)
-    glue("min={q[1]}, q1={q[2]}, med={q[3]}, q3={q[4]}, max={q[5]}")
-  })) |>
-  pivot_longer(everything(), names_to = "metric", values_to = "stats") |>
-  glue_collapse(sep = "\n")
-
-## 5.5  Launches / activities headline ---------------------------------------
+## 5.2  GPT summary prompt
 headline_prompt <- glue(
   "Below is a collection of tweets; each line is ",
-  "URL | Date | Engagement Rate | Tweet text.\n\n",
-  "Write ONE concise bullet‑point summary of all concrete activities, events, ",
-  "and product launches mentioned across the entire set.\n",
-  "• **Headline** (≤20 words) plus the tweet’s date (YYYY‑MM‑DD).\n",
-  "• Next line (indented two spaces) – copy the first 60 characters of the tweet ",
-  "text exactly **and then paste the raw URL**. **Do *not* wrap the URL in brackets ",
-  "or add the word “Link”.**\n\n",
+  "Date | ER | Tweet text | URL.\n\n",
+  "Write concise bullet-point summaries of concrete activities, events, ",
+  "and product launches (NO analytics commentary).\n\n",
   big_text
 )
-overall_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 
-## 5.6  Numeric + content insights -------------------------------------------
-insight_prompt <- glue(
-"
-You are an experienced social‑media analyst.
+launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 
-### Tasks for the last 24 h
-1. **Key Numeric Insights**  
-   • Highest ER, its distance to median, show tweet & date (use Data A/B).  
-   • Median ER vs. Twitter median 0.015 %.  
-   • Comment on spread/outliers (Data B only).
+# -----------------------------------------------------------------------------
+# Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
+# content changed)
+# -----------------------------------------------------------------------------
+# Assemble final report (single section now)
+writeLines(c(
+  "# Daily Twitter Report",
+  "",
+  "## Launches & Activities",
+  launches_summary
+), "summary.md")
 
-2. **Content‑type performance** – Use Data C only.  
-3. **Keyword / Hashtag trends** – 3‑5 terms with higher ER (Data D only).
-
-### Rules
-* Bullet points ≤ 12 words.  
-* Dates as `YYYY‑MM‑DD`.  
-* Do not invent numbers.
-
-### Data A
-{big_text}
-
-### Data B
-{five_num}
-
-### Data C
-{content_block}
-
-### Data D
-{keyword_block}
-"
-)
-overall_summary2 <- ask_gpt(insight_prompt, max_tokens = 900)
-
-## 5.7  Engagement‑tier themes -----------------------------------------------
-non_na <- sum(!is.na(df$engagement_rate))
-
-if (non_na >= 3) {                   # enough data → tertiles via ntile()
-  df_tier <- df %>%
-    mutate(
-      tier_num = dplyr::ntile(engagement_rate, 3),
-      tier     = factor(c("Low", "Medium", "High")[tier_num],
-                        levels = c("Low", "Medium", "High"))
-    )
-} else {                             # not enough observations
-  df_tier <- df %>%
-    mutate(tier = factor("Medium", levels = c("Low", "Medium", "High")))
-}
-
-# ── tokenise & TF‑IDF -------------------------------------------------------
-uni <- df_tier %>% select(tier, text) %>% unnest_tokens(word, text)
-bi  <- df_tier %>% select(tier, text) %>%
-        unnest_tokens(word, text, token = "ngrams", n = 2) %>%
-        separate_rows(word, sep = " ")
-
-tidy_tokens <- bind_rows(uni, bi) %>%
-  filter(
-    !word %in% c("https", "t.co", "rt"),
-    !str_detect(word, "^\\d+$")
-  ) %>%
-  anti_join(tidytext::stop_words, by = "word")
-
-tier_keywords <- tidy_tokens %>%
-  count(tier, word, sort = TRUE) %>%
-  bind_tf_idf(word, tier, n) %>%
-  group_by(tier) %>%
-  slice_max(tf_idf, n = 12, with_ties = FALSE) %>%
-  mutate(row = glue("{word} ({n})")) %>%
-  summarise(keywords = glue_collapse(row, sep = "; "), .groups = "drop")
-
-# ── build the bullet lines safely ------------------------------------------
-if (nrow(tier_keywords) == 0) {
-  theme_lines <- "• No tiers – insufficient data"
-} else {
-  theme_lines <- glue_collapse(
-    sprintf("• %s tier → %s",
-            tier_keywords$tier,
-            ifelse(tier_keywords$keywords == "",
-                   "No keywords (insufficient data)",
-                   tier_keywords$keywords)),
-    sep = "\n")
-}
-
-# ── GPT prompt --------------------------------------------------------------
-theme_prompt <- glue(
-  "You are a social‑media engagement analyst.\n\n",
-  "Below are distinctive keywords for each engagement tier:\n",
-  theme_lines,
-  "\n\nTasks\n",
-  "1. Summarise the main theme(s) per tier in ≤ 80 words.\n",
-  "2. Suggest one content tip to move tweets up one tier.\n",
-  "Do not invent numbers."
-)
-
-overall_summary3 <- ask_gpt(theme_prompt, max_tokens = 500)
-
-
-## 5.8  Assemble markdown -----------------------------------------------------
-
-# -- helper to drop duplicate URLs ------------------------------------------
-dedup_links <- function(txt) {
-  # 1) turn “…\n(URL)” into “… URL”  (handles the newline case)
-  txt <- stringr::str_replace_all(
-    txt,
-    "(?m)\\n\\((https?://\\S+)\\)",   # (?m) = multiline
-    " \\1"
-  )
-  # 2) collapse any residual “URL  URL” on the same line
-  stringr::str_replace_all(
-    txt,
-    "(https?://\\S+)\\s+\\1",
-    "\\1"
-  )
-}
-
-
-final_report <- paste(
-  "## Launches & Activities",            # section subtitle
-  overall_summary  |> dedup_links(),
-  "\n\n",
-  "## Numeric & Content Insights",
-  overall_summary2 |> dedup_links(),
-  "\n\n",
-  "## Engagement Themes & Tips",
-  overall_summary3 |> dedup_links(),
-  sep = "\n\n"
-)
-
-# escape $ so LaTeX (pagedown) is happy
-final_report <- stringr::str_replace_all(final_report, "\\$", "\\\\$")
-
-writeLines(c("# Daily Twitter Report", "", final_report), "summary.md")
-
-
-## 5.9  Render PDF ------------------------------------------------------------
-# Tell pagedown exactly where Chrome is
-chrome_path <- Sys.getenv("CHROME_BIN")
-if (!nzchar(chrome_path)) chrome_path <- pagedown::find_chrome()  # fallback
-
+# Render PDF (pagedown)
+chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
 pagedown::chrome_print(
-  input      = "summary.md",
-  output     = "summary_full.pdf",
-  browser    = chrome_path,          # ← NEW
-  extra_args = c("--no-sandbox")
+  input   = "summary.md",
+  output  = "summary_full.pdf",
+  browser = chrome_path,
+  extra_args = "--no-sandbox"
 )
 
-# 6 ── VERIFY PDF EXISTS ------------------------------------------------------
-if (!file.exists("summary_full.pdf")) {
+if (!file.exists("summary_full.pdf"))
   stop("❌ PDF not generated – summary_full.pdf missing")
-}
 
-# 7 ── UPLOAD TO SUPABASE -----------------------------------------------------
+# Upload to Supabase – unchanged
 object_path <- sprintf(
   "%s/summary_%s.pdf",
-  format(Sys.Date(), "%Yw%V"),                    # folder YYYYwWW
+  format(Sys.Date(), "%Yw%V"),
   format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
 )
+upload_url <- sprintf("%s/storage/v1/object/%s/%s?upload=1",
+                      SB_URL, SB_BUCKET, object_path)
 
-upload_url <- sprintf(
-  "%s/storage/v1/object/%s/%s?upload=1",
-  SB_URL, SB_BUCKET, object_path
-)
-
-resp <- request(upload_url) |>
+request(upload_url) |>
   req_method("POST") |>
   req_headers(
     Authorization = sprintf("Bearer %s", SB_STORAGE_KEY),
@@ -413,26 +228,25 @@ resp <- request(upload_url) |>
     `Content-Type` = "application/pdf"
   ) |>
   req_body_file("summary_full.pdf") |>
-  req_error(is_error = \(x) FALSE) |>
-  req_perform()
+  req_perform() |>
+  resp_check_status()
 
-if (resp_status(resp) >= 300) stop("Upload failed – status ", resp_status(resp))
-cat("✔ Uploaded to Supabase:", object_path, "\n")
+cat("✔ Uploaded PDF to Supabase:", object_path, "\n")
 
-# 8 ── EMAIL VIA MAILJET ------------------------------------------------------
+# Email via Mailjet – unchanged
 from_email <- if (str_detect(MAIL_FROM, "<.+@.+>"))
   str_remove_all(str_extract(MAIL_FROM, "<.+@.+>"), "[<>]") else MAIL_FROM
 from_name  <- if (str_detect(MAIL_FROM, "<.+@.+>"))
   str_trim(str_remove(MAIL_FROM, "<.+@.+>$")) else "Report Bot"
 
-mj_resp <- request("https://api.mailjet.com/v3.1/send") |>
+request("https://api.mailjet.com/v3.1/send") |>
   req_auth_basic(MJ_API_KEY, MJ_API_SECRET) |>
   req_body_json(list(
     Messages = list(list(
       From      = list(Email = from_email, Name = from_name),
       To        = list(list(Email = MAIL_TO)),
-      Subject   = "Daily Twitter Report",
-      TextPart  = "Attached you'll find the daily report in PDF.",
+      Subject   = "Daily Twitter Report – Launches & Activities",
+      TextPart  = "Attached you'll find today's launch/activity summary.",
       Attachments = list(list(
         ContentType   = "application/pdf",
         Filename      = "daily_report.pdf",
@@ -440,13 +254,7 @@ mj_resp <- request("https://api.mailjet.com/v3.1/send") |>
       ))
     ))
   )) |>
-  req_error(is_error = \(x) FALSE) |>
-  req_perform()
+  req_perform() |>
+  resp_check_status()
 
-if (resp_status(mj_resp) >= 300) {
-  cat("\n↪ Mailjet response body:\n",
-      resp_body_string(mj_resp, encoding = "UTF-8"), "\n\n")
-  stop("Mailjet returned status ", resp_status(mj_resp))
-}
-cat("📧  Mailjet response OK — report emailed\n")
-
+cat("📧  Report emailed via Mailjet\n")
