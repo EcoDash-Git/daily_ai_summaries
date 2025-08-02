@@ -56,6 +56,9 @@ ask_gpt <- function(prompt, model = "gpt-4o-mini",
 
 `%||%` <- function(a, b) if (nzchar(a)) a else b
 
+
+
+
 # 2 ── ENVIRONMENT VARIABLES -------------------------------------------------
 SB_HOST        <- trim_env("SUPABASE_HOST")
 SB_PORT        <- as.integer(trim_env("SUPABASE_PORT", "6543"))
@@ -194,6 +197,19 @@ headline_prompt <- glue(
 )
 
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
+
+  # ── clean duplicate URLs the model sometimes emits ─────────────────────────
+collapse_dupe_urls <- function(txt) {
+  txt |>
+    # Case 1: newline + second copy → keep only one copy
+    str_replace_all("\\n?\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)", " (\\1)") |>
+    # Case 2: same URL repeated on the same line “… url  url)”
+    str_replace_all("(https?://\\S+)\\s+\\1\\)", "\\1)")
+}
+
+launches_summary <- collapse_dupe_urls(launches_summary)
+
+
 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
