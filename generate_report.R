@@ -225,12 +225,14 @@ writeLines(c(
 
 # Render PDF (pagedown)
 chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
+
 pagedown::chrome_print(
   input   = "summary.md",
   output  = "summary_full.pdf",
   browser = chrome_path,
-  extra_args = "--no-sandbox"
+  extra_args = c("--headless=new", "--disable-gpu", "--no-sandbox")
 )
+
 
 if (!file.exists("summary_full.pdf"))
   stop("❌ PDF not generated – summary_full.pdf missing")
