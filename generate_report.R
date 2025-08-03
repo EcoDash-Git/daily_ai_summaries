@@ -196,40 +196,52 @@ headline_prompt <- glue(
   big_text
 )
 
-launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 
-  # ── clean duplicate URLs the model sometimes emits ─────────────────────────
 # ── clean duplicate URLs the model sometimes emits ─────────────────────────
 collapse_dupe_urls <- function(txt) {
 
-  ## A) “(url  (url))”  or  “(url\n(url))”  ➜  “(url)”
+  # ------------------------------------------------------------------
+  # 1️⃣  Case A – bullet newline URL newline (duplicate)  ➜  one line
+  # ------------------------------------------------------------------
+  #
+  #   Bullet text\n
+  #   (url\n
+  #   (url))        →   Bullet text (url)
+  #
   txt <- stringr::str_replace_all(
     txt,
-    "\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)",    # same URL twice inside ()
-    "(\\1)"
+    "(?ms)^([^\n]+?)\\n\\((https?://[^\\s)]+)\\s*\\n\\(\\2\\)\\)",
+    "\\1 (\\2)"
   )
 
-  ## B) “… url  url)”  or “… url\nurl)”  ➜ “… url)”
+  # ------------------------------------------------------------------
+  # 2️⃣  Case B – bullet newline single URL  ➜  same line
+  # ------------------------------------------------------------------
+  #
+  #   Bullet text\n
+  #   (url)         →   Bullet text (url)
+  #
+  txt <- stringr::str_replace_all(
+    txt,
+    "(?ms)^([^\n]+?)\\n\\((https?://[^\\s)]+)\\)",
+    "\\1 (\\2)"
+  )
+
+  # ------------------------------------------------------------------
+  # 3️⃣  Case C – “url  url)” duplicates on same line
+  # ------------------------------------------------------------------
   txt <- stringr::str_replace_all(
     txt,
     "(https?://\\S+)\\s+\\1\\)",
     "\\1)"
   )
 
-  ## C) bullet ends, newline, then “(url …)”  ➜  keep on same line once
-  txt <- stringr::str_replace_all(
-    txt,
-    # 1st capture = entire bullet up to end-of-line
-    "^(.*?)(?:\\s*)\\n\\((https?://[^\\s)]+)\\s*(?:\\n\\(\\2\\))?\\)",
-    "\\1 (\\2)"
-  )
-
   txt
 }
 
+launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
+
 launches_summary <- collapse_dupe_urls(launches_summary)
-
-
 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
