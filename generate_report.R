@@ -158,7 +158,7 @@ tweets <- twitter_raw |>
     publish_dt = lubridate::ymd_hms(date, tz = "UTC", quiet = TRUE),
     text       = str_squish(text)
   ) |>
-  filter(publish_dt >= Sys.time() - lubridate::ddays(1)) |>
+  filter(publish_dt >= Sys.time() - lubridate::ddays(2)) |>
   distinct(tweet_id, .keep_all = TRUE)
 
 df  <- tweets |> filter(tweet_type == "original")  # originals only
