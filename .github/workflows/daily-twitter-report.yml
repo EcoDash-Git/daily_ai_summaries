@@ -54,6 +54,10 @@ jobs:
           install-dependencies: true
           chrome-version: stable
 
+      # 3-b) Expose the path so R / pagedown can find it   ⟵  NEW
+      - run: echo "CHROME_BIN=$CHROME_PATH" >> "$GITHUB_ENV"
+
+
       # 4) System libraries for R packages
       - name: Install system libraries
         run: |
