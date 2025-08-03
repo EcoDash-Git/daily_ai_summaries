@@ -187,10 +187,10 @@ headline_prompt <- glue(
   "Write a bullet-point summary of concrete product launches, events, ",
   "or other activities **mentioned in the tweets**.\n\n",
 
-  "• Begin every bullet with the date (`YYYY-MM-DD:`).\n",
-  "• Then give a concise summary (≤ 20 words).\n",
-  "• **Finish the bullet with the ORIGINAL tweet URL in parentheses**, e.g.\n",
-  "  `2025-08-02: Beacon Wallet launched dark-mode interface (https://twitter.com/…)`\n",
+ "• Begin every bullet with the date (`YYYY-MM-DD:`).\n",
+"• Then give a concise summary (≤ 20 words).\n",
+"• Finish with **exactly ONE** raw tweet URL in parentheses, no line-breaks,\n",
+"  e.g. `2025-08-02: Beacon Wallet … (https://twitter.com/…)`.\n",
   "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
 
   big_text
