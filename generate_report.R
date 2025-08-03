@@ -202,23 +202,30 @@ launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 # ── clean duplicate URLs the model sometimes emits ─────────────────────────
 collapse_dupe_urls <- function(txt) {
 
-  # 1) “(url  (url))”  or  “(url\n(url))”  ➜  “(url)”
+  ## A) “(url  (url))”  or  “(url\n(url))”  ➜  “(url)”
   txt <- stringr::str_replace_all(
     txt,
-    "\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)",   # same URL twice inside ()
+    "\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)",    # same URL twice inside ()
     "(\\1)"
   )
 
-  # 2) “… url  url)”  or  “… url\nurl)”  ➜  “… url)”
+  ## B) “… url  url)”  or “… url\nurl)”  ➜ “… url)”
   txt <- stringr::str_replace_all(
     txt,
     "(https?://\\S+)\\s+\\1\\)",
     "\\1)"
   )
 
+  ## C) bullet ends, newline, then “(url …)”  ➜  keep on same line once
+  txt <- stringr::str_replace_all(
+    txt,
+    # 1st capture = entire bullet up to end-of-line
+    "^(.*?)(?:\\s*)\\n\\((https?://[^\\s)]+)\\s*(?:\\n\\(\\2\\))?\\)",
+    "\\1 (\\2)"
+  )
+
   txt
 }
-
 
 launches_summary <- collapse_dupe_urls(launches_summary)
 
