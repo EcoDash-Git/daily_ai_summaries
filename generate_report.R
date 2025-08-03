@@ -199,13 +199,26 @@ headline_prompt <- glue(
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700)
 
   # ── clean duplicate URLs the model sometimes emits ─────────────────────────
+# ── clean duplicate URLs the model sometimes emits ─────────────────────────
 collapse_dupe_urls <- function(txt) {
-  txt |>
-    # Case 1: newline + second copy → keep only one copy
-    str_replace_all("\\n?\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)", " (\\1)") |>
-    # Case 2: same URL repeated on the same line “… url  url)”
-    str_replace_all("(https?://\\S+)\\s+\\1\\)", "\\1)")
+
+  # 1) “(url  (url))”  or  “(url\n(url))”  ➜  “(url)”
+  txt <- stringr::str_replace_all(
+    txt,
+    "\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)",   # same URL twice inside ()
+    "(\\1)"
+  )
+
+  # 2) “… url  url)”  or  “… url\nurl)”  ➜  “… url)”
+  txt <- stringr::str_replace_all(
+    txt,
+    "(https?://\\S+)\\s+\\1\\)",
+    "\\1)"
+  )
+
+  txt
 }
+
 
 launches_summary <- collapse_dupe_urls(launches_summary)
 
