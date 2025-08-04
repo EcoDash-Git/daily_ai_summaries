@@ -200,24 +200,24 @@ headline_prompt <- glue(
 
 collapse_dupe_urls <- function(txt) {
 
-  ## 1️⃣  glue the *first* orphan "(url)" to the previous line
-  txt <- gsub("\\n\\s*\\((https?://[^\\s)]+)\\)", " (\\1)", txt,
-              perl = TRUE)
+  ## 1️⃣  pull any orphan “(url)” up onto its bullet line
+  txt <- gsub("\\n+\\s*\\((https?://[^\\s)]+)\\)", " (\\1)", txt, perl = TRUE)
 
-  ## 2️⃣  remove every   "(url)"   that is now the **only thing on its line**
-  ##     (leading spaces are allowed, no text before it)
-  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$", "",
+  ## 2️⃣  if a line contains **only** “(url)” delete that line completely
+  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$", "", txt, perl = TRUE)
+
+  ## 3️⃣  INSIDE a pair of brackets keep the first URL and drop ALL
+  ##     further repetitions, even if they have newlines/spaces in-between
+  ##       (url  (url) (url) )   →  (url)
+  txt <- gsub("(?s)\\((https?://[^\\s)]+)(?:\\s*\\(\\1\\))+\\s*\\)", "(\\1)",
               txt, perl = TRUE)
 
-  ## 3️⃣  inside a single (…) keep only the first URL, drop the rest
-  txt <- gsub("(?s)\\((https?://[^\\s)]+).*?\\)", "(\\1)", txt,
-              perl = TRUE)
-
-  ## 4️⃣  same-line “… url  url)” → “… url)”
+  ## 4️⃣  tidy up any   “… url   url)”   leftovers on the same line
   txt <- gsub("(https?://\\S+)\\s+\\1\\)", "\\1)", txt, perl = TRUE)
 
   txt
 }
+
 
 
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
