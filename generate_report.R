@@ -216,12 +216,9 @@ collapse_dupe_urls <- function(txt) {
   txt
 }
 
-
-
-
-
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
                     collapse_dupe_urls()
+
 
 
 
