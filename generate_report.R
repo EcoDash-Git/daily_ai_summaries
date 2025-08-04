@@ -200,23 +200,20 @@ headline_prompt <- glue(
 
 collapse_dupe_urls <- function(txt) {
 
-  ## 1️⃣  pull any orphan “(url)” up onto its bullet line
+  ## A.  glue the very first orphan “(url)” to its bullet line
   txt <- gsub("\\n+\\s*\\((https?://[^\\s)]+)\\)", " (\\1)", txt, perl = TRUE)
 
-  ## 2️⃣  if a line contains **only** “(url)” delete that line completely
-  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$", "", txt, perl = TRUE)
+  ## B.  drop any still-orphan “(url)” lines (nothing but the brackets)
+  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$","", txt, perl = TRUE)
 
-  ## 3️⃣  INSIDE a pair of brackets keep the first URL and drop ALL
-  ##     further repetitions, even if they have newlines/spaces in-between
-  ##       (url  (url) (url) )   →  (url)
-  txt <- gsub("(?s)\\((https?://[^\\s)]+)(?:\\s*\\(\\1\\))+\\s*\\)", "(\\1)",
-              txt, perl = TRUE)
-
-  ## 4️⃣  tidy up any   “… url   url)”   leftovers on the same line
-  txt <- gsub("(https?://\\S+)\\s+\\1\\)", "\\1)", txt, perl = TRUE)
+  ## C.  if a line now contains more than one “(url …)” keep *only* the first
+  keep_first <- function(l) sub("^([^()]*\\([^)]*\\)).*$", "\\1", l)
+  txt <- paste(vapply(strsplit(txt, "\n")[[1]], keep_first, character(1)),
+               collapse = "\n")
 
   txt
 }
+
 
 
 
