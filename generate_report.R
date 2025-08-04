@@ -199,15 +199,27 @@ headline_prompt <- glue(
 
 
 # ── clean duplicate URLs the model sometimes emits ─────────────────────────
+## ── helper ---------------------------------------------------------------
 collapse_dupe_urls <- function(txt) {
-  txt <- gsub("\\n\\((https?://[^\\s)]+)\\)",            " (\\1)", txt, perl = TRUE)
-  txt <- gsub("\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)",  "(\\1)",  txt, perl = TRUE)
-  txt <- gsub("(https?://\\S+)\\s+\\1\\)",               "\\1)",   txt, perl = TRUE)
+
+  # 1️⃣  move any stand-alone “(url)” that sits on its own line
+  #     up to the end of the preceding bullet
+  txt <- gsub("\\n\\((https?://[^\\s)]+)\\)", " (\\1)", txt, perl = TRUE)
+
+  # 2️⃣  inside a single (…) pair keep only the first copy
+  #     e.g. "(url (url))"  ->  "(url)"
+  txt <- gsub("\\((https?://[^\\s)]+)\\s*\\(\\1\\)\\)", "(\\1)", txt, perl = TRUE)
+
+  # 3️⃣  same-line leftovers “… url  url)”  -> “… url)”
+  txt <- gsub("(https?://\\S+)\\s+\\1\\)", "\\1)", txt, perl = TRUE)
+
   txt
 }
 
+
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
                     collapse_dupe_urls()
+
 
 
 
