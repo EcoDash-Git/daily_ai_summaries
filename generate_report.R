@@ -171,10 +171,12 @@ tweet_lines <- df |>
     line = glue(
       "{format(date, '%Y-%m-%d %H:%M')} | ",
       "ER={round(engagement_rate, 4)}% | ",
-      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | "
+      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
+      "{tweet_url}"        # ← restore this
     )
   ) |>
   pull(line)
+
 
 big_text <- paste(tweet_lines, collapse = "\n")
 
