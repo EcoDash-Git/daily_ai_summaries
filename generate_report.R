@@ -196,9 +196,21 @@ headline_prompt <- glue(
   big_text
 )
 
-## --- kill the very last stubborn “(url (url))” form -----------------------
+## --- first pass: normal duplicates ----------------------------------------
+collapse_dupe_urls <- function(txt) {
+  # orphan “(url)” → glue up
+  txt <- gsub("\\n+\\s*\\((https?://[^\\s)]+)\\)", " (\\1)", txt, perl = TRUE)
+  # remove any remaining standalone “(url)” lines
+  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$", "", txt, perl = TRUE)
+  # inside one (…) keep only the first url
+  txt <- gsub("(?s)\\((https?://[^\\s)]+).*?\\)", "(\\1)", txt, perl = TRUE)
+  # “… url  url)” on same line  → “… url)”
+  txt <- gsub("(https?://\\S+)\\s+\\1\\)", "\\1)", txt, perl = TRUE)
+  txt
+}
+
+## --- second pass: the stubborn “(url (url))” form -------------------------
 dedup_final <- function(txt) {
-  #  (url⏎ (url))   →   (url)
   gsub(
     "\\((https?://[^\\s)]+)\\s*\\n?\\s*\\(\\s*\\1\\s*\\)\\s*\\)",
     "(\\1)",
@@ -209,7 +221,8 @@ dedup_final <- function(txt) {
 
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
                     collapse_dupe_urls() |>
-                    dedup_final()      # <── add this line
+                    dedup_final()
+
 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
