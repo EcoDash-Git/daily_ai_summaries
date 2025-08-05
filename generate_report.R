@@ -171,8 +171,7 @@ tweet_lines <- df |>
     line = glue(
       "{format(date, '%Y-%m-%d %H:%M')} | ",
       "ER={round(engagement_rate, 4)}% | ",
-      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
-      "{tweet_url}"
+      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | "
     )
   ) |>
   pull(line)
@@ -189,38 +188,17 @@ headline_prompt <- glue(
 
  "• Begin every bullet with the date (YYYY-MM-DD:).\n",
 "• Then give a concise summary (≤ 20 words).\n",
-"• Finish with **exactly ONE** raw tweet URL in parentheses, no line-breaks,\n",
+"• End the bullet with the tweet’s URL in parentheses — place it once, after the summary.,\n",
 "  e.g. 2025-08-02: Beacon Wallet … (https://twitter.com/…).\n",
   "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
 
   big_text
 )
 
-rebuild_bullets <- function(txt) {
-  # split on the *real* bullet starts: the date at column 1
-  bullets <- strsplit(txt, "(?=^20\\d{2}-\\d{2}-\\d{2}:)", perl = TRUE)[[1]]
 
-  cleaned <- vapply(bullets, function(b) {
-    b <- trimws(b)
-
-    # pull the very first url (if any)
-    url <- stringr::str_extract(b, "https?://[^)\\s]+")
-    if (is.na(url)) return(b)        # unlikely but keeps code safe
-
-    # strip EVERYTHING that looks like a url or ( … ) thereafter
-    b <- gsub("\\([^)]*\\)", "", b)              # toss any (…) groups
-    b <- gsub("https?://[^)\\s]+", "", b)        # toss bare urls
-    b <- stringr::str_squish(b)                  # shrink doubled spaces
-
-    sprintf("%s (%s)", b, url)                   # rebuild bullet
-  }, character(1))
-
-  paste(cleaned, collapse = "\n")
-}
 
 # ---- use it ---------------------------------------------------------------
-launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    rebuild_bullets()
+launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
 # content changed)
