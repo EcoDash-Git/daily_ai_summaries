@@ -199,36 +199,51 @@ headline_prompt <- glue(
 ## --- first pass: normal duplicates ----------------------------------------
 # -------------------------- POST-GPT CLEAN-UP -------------------------------
 # ----- POST-GPT FIX-UPS -----------------------------------------------------
-dedup_bracket_twins <- function(x) {
-  gsub("\\((https?://[^\\s)]+)\\s*\\n?\\s*\\(\\s*\\1\\s*\\)\\s*\\)", "(\\1)", x, perl = TRUE)
+# ---------------------------------------------------------------------------
+# keep_one_url_per_bullet()  ← paste this somewhere above you use it
+# ---------------------------------------------------------------------------
+keep_one_url_per_bullet <- function(txt) {
+  # 1. split raw output into trimmed lines
+  raw <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
+
+  # 2. assemble logical bullets (a bullet may span >1 physical line)
+  bullets <- character()
+  buf <- NULL
+  for (ln in raw) {
+    if (grepl("^20\\d{2}-\\d{2}-\\d{2}:", ln)) {   # new bullet starts
+      if (!is.null(buf)) bullets <- c(bullets, paste(buf, collapse = " "))
+      buf <- ln
+    } else {                                       # continuation (likely "(url")
+      buf <- c(buf, ln)
+    }
+  }
+  if (!is.null(buf)) bullets <- c(bullets, paste(buf, collapse = " "))
+
+  # 3. for every bullet:
+  bullets <- vapply(
+    bullets,
+    \(b) {
+      #   • grab the first URL inside any parentheses
+      m <- regexpr("\\(\\s*https?://[^\\s)]+\\s*\\)", b, perl = TRUE)
+      if (m[1] == -1) return(b)                    # no URL at all
+
+      url <- regmatches(b, m)[[1]]                # "(https://…)"
+      url <- gsub("[()\\s]", "", url)             # strip parens/spaces
+
+      #   • delete *all* parentheses blocks, then append a clean one
+      b <- gsub("\\([^)]*\\)", "", b)             # remove every "(…)"
+      b <- trimws(gsub("\\s{2,}", " ", b))        # squeeze double spaces
+      sprintf("%s (%s)", b, url)                  # final bullet
+    },
+    character(1)
+  )
+
+  paste(bullets, collapse = "\n")
 }
 
-clean_lines <- function(x) {
-  ln <- trimws(strsplit(x, "\n", fixed = TRUE)[[1]])
-  ln <- ln[ !grepl("^\\(", ln) ]                          # drop bare-URL lines
-  ln <- sub("^([^()]*\\([^)]*\\)).*$", "\\1", ln, perl = TRUE)
-  paste(ln, collapse = "\n")
-}
-
-fix_urls <- function(x) {
-  # 1️⃣  bring every orphan “(url …)” up to the PREVIOUS line
-  x <- gsub("\\n\\s*\\(", " (", x, perl = TRUE)
-
-  # 2️⃣  inside a single set of brackets keep ONLY the very first url
-  x <- gsub("\\((https?://[^\\s)]+).*?\\)", "(\\1)", x, perl = TRUE)
-
-  # 3️⃣  split → trim → throw away any residual lines that are just “(url)”
-  ln <- trimws(strsplit(x, "\\n")[[1]])
-  ln <- ln[!grepl("^\\(https?://[^)]*\\)$", ln)]
-
-  paste(ln, collapse = "\n")
-}
 
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    fix_urls()
-
-
-
+                    keep_one_url_per_bullet()
 
 
 # -----------------------------------------------------------------------------
