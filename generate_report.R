@@ -181,63 +181,46 @@ big_text <- paste(tweet_lines, collapse = "\n")
 
 ## 5.2  GPT summary prompt
 headline_prompt <- glue(
-  "Below are tweets:  Date | ER | Text | URL.\n\n",
-  "For EACH bullet you MUST:\n",
-  "• start with the date as YYYY-MM-DD:\n",
-  "• write ≤20-word summary\n",
-  "• append ONE raw twitter URL in parentheses – **do NOT write any second url**\n",
-  "• END THE BULLET THERE (no text or line-breaks afterwards)\n\n",
+  "Below is a collection of tweets, each on one line as\n",
+  "Date | ER | Tweet text | URL.\n\n",
+
+  "Write a bullet-point summary of concrete product launches, events, ",
+  "or other activities **mentioned in the tweets**.\n\n",
+
+ "• Begin every bullet with the date (YYYY-MM-DD:).\n",
+"• Then give a concise summary (≤ 20 words).\n",
+"• Finish with **exactly ONE** raw tweet URL in parentheses, no line-breaks,\n",
+"  e.g. 2025-08-02: Beacon Wallet … (https://twitter.com/…).\n",
+  "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
+
   big_text
 )
 
+rebuild_bullets <- function(txt) {
+  # split on the *real* bullet starts: the date at column 1
+  bullets <- strsplit(txt, "(?=^20\\d{2}-\\d{2}-\\d{2}:)", perl = TRUE)[[1]]
 
-# ── after you get `gpt_out <- ask_gpt(...)` ──────────────────────────────
-postprocess_bullets <- function(txt, as_markdown = FALSE) {
-  lines <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
-  lines <- lines[nzchar(lines)]                     # drop blank lines
+  cleaned <- vapply(bullets, function(b) {
+    b <- trimws(b)
 
-  # 1. glue orphan “(url)” continuations back to the previous line ----------
-  glued <- character()
-  for (ln in lines) {
-    if (grepl("^\\(", ln)) {
-      glued[length(glued)] <- paste(glued[length(glued)], ln)
-    } else {
-      glued <- c(glued, ln)
-    }
-  }
+    # pull the very first url (if any)
+    url <- stringr::str_extract(b, "https?://[^)\\s]+")
+    if (is.na(url)) return(b)        # unlikely but keeps code safe
 
-  # 2. rebuild every bullet so it carries **one and only one** URL ----------
-  rebuilt <- vapply(
-    glued,
-    \(b) {
-      urls <- stringr::str_extract_all(b, "https?://[^)\\s]+")[[1]]
-      if (length(urls) == 0) return(b)                # unlikely, but safe
+    # strip EVERYTHING that looks like a url or ( … ) thereafter
+    b <- gsub("\\([^)]*\\)", "", b)              # toss any (…) groups
+    b <- gsub("https?://[^)\\s]+", "", b)        # toss bare urls
+    b <- stringr::str_squish(b)                  # shrink doubled spaces
 
-      url1 <- urls[1]
+    sprintf("%s (%s)", b, url)                   # rebuild bullet
+  }, character(1))
 
-      # strip all existing “( … )” or “[ … ]( … )” pieces
-      b <- gsub("\\([^)]*\\)", "", b)                 # remove (…) blocks
-      b <- gsub("\\[[^]]*\\]\\([^)]*\\)", "", b)      # remove markdown links
-      b <- stringr::str_squish(b)
-
-      if (as_markdown) {
-        sprintf("%s [Link](%s)", b, url1)             # weekly style
-      } else {
-        sprintf("%s (%s)",     b, url1)               # daily style
-      }
-    },
-    character(1)
-  )
-
-  paste(rebuilt, collapse = "\n")
+  paste(cleaned, collapse = "\n")
 }
 
-# -------------------------------------------------------------------------
-# DAILY report  → keep raw url in parentheses
+# ---- use it ---------------------------------------------------------------
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    postprocess_bullets(as_markdown = FALSE)
-
-
+                    rebuild_bullets()
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
 # content changed)
