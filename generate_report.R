@@ -196,54 +196,42 @@ headline_prompt <- glue(
   big_text
 )
 
-## --- first pass: normal duplicates ----------------------------------------
-# -------------------------- POST-GPT CLEAN-UP -------------------------------
-# ----- POST-GPT FIX-UPS -----------------------------------------------------
-# ---------------------------------------------------------------------------
-# keep_one_url_per_bullet()  ← paste this somewhere above you use it
-# ---------------------------------------------------------------------------
-keep_one_url_per_bullet <- function(txt) {
-  # 1. split raw output into trimmed lines
-  raw <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
+dedup_bullets <- function(txt) {
+  # split, trim, drop blank lines
+  ln <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
+  ln <- ln[nzchar(ln)]
 
-  # 2. assemble logical bullets (a bullet may span >1 physical line)
-  bullets <- character()
-  buf <- NULL
-  for (ln in raw) {
-    if (grepl("^20\\d{2}-\\d{2}-\\d{2}:", ln)) {   # new bullet starts
-      if (!is.null(buf)) bullets <- c(bullets, paste(buf, collapse = " "))
-      buf <- ln
-    } else {                                       # continuation (likely "(url")
-      buf <- c(buf, ln)
-    }
-  }
-  if (!is.null(buf)) bullets <- c(bullets, paste(buf, collapse = " "))
+  # drop lines that are *only* "(url)"
+  ln <- ln[ !grepl("^\\(https?://[^)]*\\)$", ln) ]
 
-  # 3. for every bullet:
-  bullets <- vapply(
-    bullets,
+  # rebuild each bullet
+  ln <- vapply(
+    ln,
     \(b) {
-      #   • grab the first URL inside any parentheses
-      m <- regexpr("\\(\\s*https?://[^\\s)]+\\s*\\)", b, perl = TRUE)
-      if (m[1] == -1) return(b)                    # no URL at all
+      # collect all urls in the line
+      urls <- stringr::str_extract_all(b, "https?://[^)\\s]+")[[1]]
+      if (length(urls) == 0) return(b)          # no url → return as-is
 
-      url <- regmatches(b, m)[[1]]                # "(https://…)"
-      url <- gsub("[()\\s]", "", url)             # strip parens/spaces
+      # keep only the very first url
+      url1 <- urls[1]
 
-      #   • delete *all* parentheses blocks, then append a clean one
-      b <- gsub("\\([^)]*\\)", "", b)             # remove every "(…)"
-      b <- trimws(gsub("\\s{2,}", " ", b))        # squeeze double spaces
-      sprintf("%s (%s)", b, url)                  # final bullet
+      # strip every (…) block, squeeze whitespace
+      b <- stringr::str_replace_all(b, "\\([^)]*\\)", "")
+      b <- stringr::str_squish(b)
+
+      sprintf("%s (%s)", b, url1)
     },
     character(1)
   )
 
-  paste(bullets, collapse = "\n")
+  paste(ln, collapse = "\n")
 }
 
-
+## ------------------------------------------------------------------
+## REPLACE your entire clean-up chain with just this one function
+## ------------------------------------------------------------------
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    keep_one_url_per_bullet()
+                    dedup_bullets()
 
 
 # -----------------------------------------------------------------------------
