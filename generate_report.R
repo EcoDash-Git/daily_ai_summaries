@@ -196,42 +196,51 @@ headline_prompt <- glue(
   big_text
 )
 
-dedup_bullets <- function(txt) {
-  # split, trim, drop blank lines
-  ln <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
-  ln <- ln[nzchar(ln)]
+# ── after you get `gpt_out <- ask_gpt(...)` ──────────────────────────────
+postprocess_bullets <- function(txt, as_markdown = FALSE) {
+  lines <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
+  lines <- lines[nzchar(lines)]                     # drop blank lines
 
-  # drop lines that are *only* "(url)"
-  ln <- ln[ !grepl("^\\(https?://[^)]*\\)$", ln) ]
+  # 1. glue orphan “(url)” continuations back to the previous line ----------
+  glued <- character()
+  for (ln in lines) {
+    if (grepl("^\\(", ln)) {
+      glued[length(glued)] <- paste(glued[length(glued)], ln)
+    } else {
+      glued <- c(glued, ln)
+    }
+  }
 
-  # rebuild each bullet
-  ln <- vapply(
-    ln,
+  # 2. rebuild every bullet so it carries **one and only one** URL ----------
+  rebuilt <- vapply(
+    glued,
     \(b) {
-      # collect all urls in the line
       urls <- stringr::str_extract_all(b, "https?://[^)\\s]+")[[1]]
-      if (length(urls) == 0) return(b)          # no url → return as-is
+      if (length(urls) == 0) return(b)                # unlikely, but safe
 
-      # keep only the very first url
       url1 <- urls[1]
 
-      # strip every (…) block, squeeze whitespace
-      b <- stringr::str_replace_all(b, "\\([^)]*\\)", "")
+      # strip all existing “( … )” or “[ … ]( … )” pieces
+      b <- gsub("\\([^)]*\\)", "", b)                 # remove (…) blocks
+      b <- gsub("\\[[^]]*\\]\\([^)]*\\)", "", b)      # remove markdown links
       b <- stringr::str_squish(b)
 
-      sprintf("%s (%s)", b, url1)
+      if (as_markdown) {
+        sprintf("%s [Link](%s)", b, url1)             # weekly style
+      } else {
+        sprintf("%s (%s)",     b, url1)               # daily style
+      }
     },
     character(1)
   )
 
-  paste(ln, collapse = "\n")
+  paste(rebuilt, collapse = "\n")
 }
 
-## ------------------------------------------------------------------
-## REPLACE your entire clean-up chain with just this one function
-## ------------------------------------------------------------------
+# -------------------------------------------------------------------------
+# DAILY report  → keep raw url in parentheses
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    dedup_bullets()
+                    postprocess_bullets(as_markdown = FALSE)
 
 
 # -----------------------------------------------------------------------------
