@@ -210,9 +210,23 @@ clean_lines <- function(x) {
   paste(ln, collapse = "\n")
 }
 
+fix_urls <- function(x) {
+  # 1️⃣  bring every orphan “(url …)” up to the PREVIOUS line
+  x <- gsub("\\n\\s*\\(", " (", x, perl = TRUE)
+
+  # 2️⃣  inside a single set of brackets keep ONLY the very first url
+  x <- gsub("\\((https?://[^\\s)]+).*?\\)", "(\\1)", x, perl = TRUE)
+
+  # 3️⃣  split → trim → throw away any residual lines that are just “(url)”
+  ln <- trimws(strsplit(x, "\\n")[[1]])
+  ln <- ln[!grepl("^\\(https?://[^)]*\\)$", ln)]
+
+  paste(ln, collapse = "\n")
+}
+
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-  dedup_bracket_twins() |>
-  clean_lines()
+                    fix_urls()
+
 
 
 
