@@ -181,20 +181,15 @@ big_text <- paste(tweet_lines, collapse = "\n")
 
 ## 5.2  GPT summary prompt
 headline_prompt <- glue(
-  "Below is a collection of tweets, each on one line as\n",
-  "Date | ER | Tweet text | URL.\n\n",
-
-  "Write a bullet-point summary of concrete product launches, events, ",
-  "or other activities **mentioned in the tweets**.\n\n",
-
- "• Begin every bullet with the date (`YYYY-MM-DD:`).\n",
-"• Then give a concise summary (≤ 20 words).\n",
-"• Finish with **exactly ONE** raw tweet URL in parentheses, no line-breaks,\n",
-"  e.g. `2025-08-02: Beacon Wallet … (https://twitter.com/…)`.\n",
-  "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
-
+  "Below are tweets:  Date | ER | Text | URL.\n\n",
+  "For EACH bullet you MUST:\n",
+  "• start with the date as YYYY-MM-DD:\n",
+  "• write ≤20-word summary\n",
+  "• append ONE raw twitter URL in parentheses – **do NOT write any second url**\n",
+  "• END THE BULLET THERE (no text or line-breaks afterwards)\n\n",
   big_text
 )
+
 
 # ── after you get `gpt_out <- ask_gpt(...)` ──────────────────────────────
 postprocess_bullets <- function(txt, as_markdown = FALSE) {
