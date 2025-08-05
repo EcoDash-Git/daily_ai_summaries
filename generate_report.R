@@ -197,31 +197,35 @@ headline_prompt <- glue(
 )
 
 ## --- first pass: normal duplicates ----------------------------------------
-collapse_dupe_urls <- function(txt) {
-  # orphan “(url)” → glue up
-  txt <- gsub("\\n+\\s*\\((https?://[^\\s)]+)\\)", " (\\1)", txt, perl = TRUE)
-  # remove any remaining standalone “(url)” lines
-  txt <- gsub("(?m)^\\s*\\((https?://[^\\s)]+)\\)\\s*$", "", txt, perl = TRUE)
-  # inside one (…) keep only the first url
-  txt <- gsub("(?s)\\((https?://[^\\s)]+).*?\\)", "(\\1)", txt, perl = TRUE)
-  # “… url  url)” on same line  → “… url)”
-  txt <- gsub("(https?://\\S+)\\s+\\1\\)", "\\1)", txt, perl = TRUE)
-  txt
+# -------------------------- POST-GPT CLEAN-UP -------------------------------
+clean_lines <- function(x) {
+  # split into individual, trimmed lines
+  ln <- trimws(unlist(strsplit(x, "\n", fixed = TRUE)))
+
+  # 1) throw away any line that *starts* with an opening parenthesis
+  ln <- ln[ !grepl("^\\(", ln) ]
+
+  # 2) on every remaining line: keep *only* the first (…) group and discard
+  #    whatever comes after it (if there is no (…) group, leave the line intact)
+  ln <- vapply(
+    ln,
+    \(y) {
+      m <- regexpr("\\([^()]+\\)", y, perl = TRUE)   # first (…) block
+      if (m[1] == -1) return(y)                      # no URL → return as–is
+      paste0(
+        substr(y, 1, m[1] + attr(m, "match.length") - 1)  # text up to 1st “)”
+      )
+    },
+    character(1)
+  )
+
+  paste(ln, collapse = "\n")
 }
 
-## --- second pass: the stubborn “(url (url))” form -------------------------
-dedup_final <- function(txt) {
-  gsub(
-    "\\((https?://[^\\s)]+)\\s*\\n?\\s*\\(\\s*\\1\\s*\\)\\s*\\)",
-    "(\\1)",
-    txt,
-    perl = TRUE
-  )
-}
 
 launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    collapse_dupe_urls() |>
-                    dedup_final()
+                    clean_lines()
+
 
 
 # -----------------------------------------------------------------------------
