@@ -219,10 +219,10 @@ cat("----- RAW GPT -----\n", raw, "\n-------------------\n")
 
 launches_summary <- clean_gpt_output(raw)
 
-# wrap URL once, keep any trailing space before ')'
+# AFTER clean_gpt_output()
 launches_summary <- gsub(
-  "\\((https?://[^)\\s]+)(\\s*)\\)",   # capture optional spaces
-  "(<\\1>)\\2)",                       # wrap URL, preserve spaces
+  "\\((https?://[^)\\s]+)\\)",   # (https://…)
+  "(<\\1>)",                     # (<https://…>)
   launches_summary,
   perl = TRUE
 )
@@ -240,22 +240,32 @@ writeLines(c(
   launches_summary
 ), "summary.md")
 
-# Render PDF (pagedown)
+
 chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
 
-# just before pagedown::chrome_print()
-cat("----- MARKDOWN -----\n")
-cat(readLines("summary.md"), sep = "\n")
-cat("\n--------------------\n")
 
+# Render PDF (pagedown)
+# --- Markdown → HTML (no autolink) ---------------------------------
+# Markdown → HTML (no autolink)
 
+html_file <- tempfile(fileext = ".html")
+
+rmarkdown::pandoc_convert(
+  "summary.md",
+  to     = "html4",
+  from   = "markdown+tex_math_single_backslash",
+  output = html_file,
+  options = c("--standalone", "--section-divs", "--embed-resources",
+              "--variable", "bs3=TRUE", "--variable", "theme=bootstrap")
+)
+
+# HTML → PDF
 pagedown::chrome_print(
-  input   = "summary.md",
+  input   = html_file,
   output  = "summary_full.pdf",
   browser = chrome_path,
   extra_args = c("--headless=new", "--disable-gpu", "--no-sandbox")
 )
-
 
 if (!file.exists("summary_full.pdf"))
   stop("❌ PDF not generated – summary_full.pdf missing")
