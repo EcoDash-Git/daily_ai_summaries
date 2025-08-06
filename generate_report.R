@@ -219,6 +219,14 @@ cat("----- RAW GPT -----\n", raw, "\n-------------------\n")
 
 launches_summary <- clean_gpt_output(raw)
 
+# wrap URL once, keep any trailing space before ')'
+launches_summary <- gsub(
+  "\\((https?://[^)\\s]+)(\\s*)\\)",   # capture optional spaces
+  "(<\\1>)\\2)",                       # wrap URL, preserve spaces
+  launches_summary,
+  perl = TRUE
+)
+
 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
