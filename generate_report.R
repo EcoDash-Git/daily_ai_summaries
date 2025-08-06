@@ -234,11 +234,19 @@ launches_summary <- gsub(
 # -----------------------------------------------------------------------------
 # Assemble final report (single section now)
 writeLines(c(
+  "<style>",
+  "  a, a:visited {",
+  "    color: #1a0dab !important;",   # Google-blue
+  "    text-decoration: underline;",  # keep the underline
+  "  }",
+  "</style>",
+  "",
   "# Daily Twitter Report",
   "",
   "## Launches & Activities",
   launches_summary
 ), "summary.md")
+
 
 
 chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
