@@ -235,6 +235,12 @@ writeLines(c(
 # Render PDF (pagedown)
 chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
 
+# just before pagedown::chrome_print()
+cat("----- MARKDOWN -----\n")
+cat(readLines("summary.md"), sep = "\n")
+cat("\n--------------------\n")
+
+
 pagedown::chrome_print(
   input   = "summary.md",
   output  = "summary_full.pdf",
