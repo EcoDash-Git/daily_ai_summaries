@@ -197,10 +197,25 @@ headline_prompt <- glue(
   big_text
 )
 
+## ── helper: kill stray URL lines & squash (url (url)) duplicates ───────────
+clean_gpt_output <- function(txt) {
+  # 1) squash the rare "(url (url))" form
+  txt <- gsub("\\((https?://[^)\\s]+)\\s*\\(\\1\\)\\)", "(\\1)", txt, perl = TRUE)
 
+  # 2) split into lines, trim, throw away junk lines
+  keep <- function(l) {
+    l <- trimws(l)
+    !(l == ""                ||            # blank
+      grepl("^https?://", l) ||            # bare url
+      grepl("^\\(", l))                    # orphan "(url)"
+  }
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  paste(lines[vapply(lines, keep, logical(1))], collapse = "\n")
+}
 
-# ---- use it ---------------------------------------------------------------
-launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) 
+launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
+                    clean_gpt_output()
+
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
 # content changed)
