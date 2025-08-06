@@ -213,8 +213,12 @@ clean_gpt_output <- function(txt) {
   paste(lines[vapply(lines, keep, logical(1))], collapse = "\n")
 }
 
-launches_summary <- ask_gpt(headline_prompt, max_tokens = 700) |>
-                    clean_gpt_output()
+# 5.2 – right after the GPT call
+raw <- ask_gpt(headline_prompt, max_tokens = 700)
+cat("----- RAW GPT -----\n", raw, "\n-------------------\n")
+
+launches_summary <- clean_gpt_output(raw)
+
 
 # -----------------------------------------------------------------------------
 # Markdown → PDF → Supabase → Mailjet (steps identical, only the markdown
