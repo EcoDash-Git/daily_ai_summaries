@@ -223,12 +223,29 @@ cat("----- RAW GPT -----\n", raw, "\n-------------------\n")
 launches_summary <- clean_gpt_output(raw)
 
 # AFTER clean_gpt_output()
+# -- after clean_gpt_output() ----------------------------------------------
+launches_summary <- clean_gpt_output(raw)
+
+# 1️⃣  wrap URLs that are already in (...) but lack <>
 launches_summary <- gsub(
-  "\\((https?://[^)\\s]+)\\)",   # (https://…)
-  "(<\\1>)",                     # (<https://…>)
-  launches_summary,
-  perl = TRUE
+  "\\((https?://[^)\\s]+)\\)", "(<\\1>)",
+  launches_summary, perl = TRUE
 )
+
+# 2️⃣  catch *bare* URLs that stand on their own line
+launches_summary <- gsub(
+  "(?m)^\\s*(https?://\\S+)\\s*$",    # line that is only the URL
+  "(<\\1>)",
+  launches_summary, perl = TRUE
+)
+
+# 3️⃣  catch bare URLs that trail a bullet on the same line
+launches_summary <- gsub(
+  "(https?://\\S+)$",
+  "(<\\1>)",
+  launches_summary, perl = TRUE
+)
+
 
 
 # -----------------------------------------------------------------------------
