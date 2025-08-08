@@ -238,9 +238,10 @@ launches_summary <- gsub(
 # Assemble final report (single section now)
 writeLines(c(
   "<style>",
-  "  a, a:visited {",
-  "    color: #1a0dab !important;",   # Google-blue
-  "    text-decoration: underline;",  # keep the underline
+  "  /* make ALL links—including <a class=\"uri\">—blue in the PDF */",
+  "  a, a:visited, a.uri {",
+  "    color: #1a0dab !important;",
+  "    text-decoration: underline;",
   "  }",
   "</style>",
   "",
@@ -249,6 +250,7 @@ writeLines(c(
   "## Launches & Activities",
   launches_summary
 ), "summary.md")
+
 
 
 
