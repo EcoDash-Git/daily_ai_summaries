@@ -170,28 +170,31 @@ tweet_lines <- df |>
   mutate(
     line = glue(
       "{format(date, '%Y-%m-%d %H:%M')} | ",
+      "@{username} | ",                              # ← NEW “source account”
       "ER={round(engagement_rate, 4)}% | ",
       "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
-      "{tweet_url}"        # ← restore this
+      "{tweet_url}"
     )
   ) |>
   pull(line)
+
 
 
 big_text <- paste(tweet_lines, collapse = "\n")
 
 ## 5.2  GPT summary prompt
 headline_prompt <- glue(
-  "Below is a collection of tweets, each on one line as\n",
-  "Date | ER | Tweet text | URL.\n\n",
+  "Below is a collection of tweets. Each line is\n",
+  "Date | Account | ER | Tweet text | URL.\n\n",
 
-  "Write a bullet-point summary of concrete product launches, events, ",
+  "Write bullet-point summaries of concrete product launches, events, ",
   "or other activities **mentioned in the tweets**.\n\n",
 
- "• Begin every bullet with the date (YYYY-MM-DD:).\n",
-"• Then give a concise summary (≤ 20 words).\n",
-"• End the bullet with the tweet’s URL in parentheses — place it once, after the summary.,\n",
-"  e.g. 2025-08-02: Beacon Wallet … (https://twitter.com/…).\n",
+  "• Begin every bullet with the date **and the account in parentheses**.\n",
+  "  e.g. 2025-08-07 (@redstone_defi): …\n",
+  "• Then give a concise summary (≤ 20 words).\n",
+  "• End the bullet with the tweet’s URL in parentheses — place it once, ",
+  "  after the summary.\n",
   "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
 
   big_text
