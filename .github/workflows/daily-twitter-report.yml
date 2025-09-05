@@ -1,300 +1,90 @@
-#!/usr/bin/env Rscript
-# ---------------------------------------------------------------------------
-# generate_report.R – scrape, summarise, render PDF, upload to Supabase,
-#                     and (optionally) email a DAILY Twitter report
-# ---------------------------------------------------------------------------
+name: Daily Twitter Report
 
-# 0 ── PACKAGES ──────────────────────────────────────────────────────────────
-required <- c(
-  "tidyverse", "lubridate", "httr2", "httr", "jsonlite", "glue",
-  "pagedown", "rmarkdown", "RPostgres", "DBI", "base64enc", "tidytext"
-)
-invisible(lapply(required, function(pkg) {
-  if (!requireNamespace(pkg, quietly = TRUE)) {
-    install.packages(pkg, repos = "https://cloud.r-project.org", quiet = TRUE)
-  }
-  library(pkg, character.only = TRUE)
-}))
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"       # every day @ 03:00 UTC
 
-# 1 ── HELPERS ───────────────────────────────────────────────────────────────
-trim_env <- function(var, default = "") {
-  val <- stringr::str_trim(Sys.getenv(var, unset = default))
-  if (identical(val, "")) default else val
-}
+jobs:
+  build-run:
+    runs-on: ubuntu-latest
 
-ask_gpt <- function(prompt, model = "gpt-4o-mini",
-                    temperature = 0, max_tokens = 700, retries = 3) {
-  for (k in seq_len(retries)) {
-    resp <- tryCatch(
-      httr2::request("https://api.openai.com/v1/chat/completions") |>
-        httr2::req_method("POST") |>
-        httr2::req_headers(Authorization = paste("Bearer", OPENAI_KEY)) |>
-        httr2::req_body_json(list(
-          model       = model,
-          temperature = temperature,
-          max_tokens  = max_tokens,
-          messages    = list(
-            list(
-              role    = "system",
-              content = "You are a concise analyst. Summarise only concrete activities, events or product launches, in bullet points."
-            ),
-            list(role = "user", content = prompt)
-          )
-        )) |>
-        httr2::req_retry(max_tries = 3) |>
-        httr2::req_perform(),
-      error = identity
-    )
-    if (!inherits(resp, "error") && httr2::resp_status(resp) == 200) {
-      return(
-        httr2::resp_body_json(resp)$choices[[1]]$message$content |>
-          stringr::str_trim()
-      )
-    }
-    Sys.sleep(2 ^ k)
-  }
-  stop("All OpenAI retries failed")
-}
+    env:
+      ## Supabase
+      SUPABASE_HOST:         ${{ secrets.SUPABASE_HOST }}
+      SUPABASE_PORT:         ${{ secrets.SUPABASE_PORT }}
+      SUPABASE_DB:           ${{ secrets.SUPABASE_DB }}
+      SUPABASE_USER:         ${{ secrets.SUPABASE_USER }}
+      SUPABASE_PWD:          ${{ secrets.SUPABASE_PWD }}
+      SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+      SB_BUCKET:             ${{ vars.SB_BUCKET || 'daily-reports' }}
 
-`%||%` <- function(a, b) if (nzchar(a)) a else b
+      ## OpenAI
+      OPENAI_API_KEY:        ${{ secrets.OPENAI_API_KEY }}
 
-# 2 ── ENVIRONMENT VARIABLES -------------------------------------------------
-SEND_EMAIL     <- tolower(trim_env("SEND_EMAIL", "false")) %in% c("1","true","yes")
+      ## Mailjet (optional when SEND_EMAIL=false)
+      MJ_API_KEY:            ${{ secrets.MJ_API_KEY }}
+      MJ_API_SECRET:         ${{ secrets.MJ_API_SECRET }}
+      MAIL_FROM:             ${{ vars.MAIL_FROM }}
+      MAIL_TO:               ${{ vars.MAIL_TO }}
 
-SB_HOST        <- trim_env("SUPABASE_HOST")
-SB_PORT        <- as.integer(trim_env("SUPABASE_PORT", "6543"))
-SB_DB          <- trim_env("SUPABASE_DB")
-SB_USER        <- trim_env("SUPABASE_USER")
-SB_PWD         <- trim_env("SUPABASE_PWD")
-SB_URL         <- sub("/+$","", trim_env("SUPABASE_URL"))         # normalize
-SB_STORAGE_KEY <- trim_env("SUPABASE_SERVICE_ROLE")
-SB_BUCKET      <- trim_env("SB_BUCKET", "daily-reports")
+      ## Toggle email step
+      SEND_EMAIL:            "false"
 
-OPENAI_KEY     <- trim_env("OPENAI_API_KEY")
+      ## tidy-CI defaults
+      CI: true
+      R_KEEP_PKG_SOURCE: no
 
-MJ_API_KEY     <- trim_env("MJ_API_KEY")
-MJ_API_SECRET  <- trim_env("MJ_API_SECRET")
-MAIL_FROM      <- trim_env("MAIL_FROM")
-MAIL_TO        <- trim_env("MAIL_TO")
+    steps:
+      - uses: actions/checkout@v4
 
-# Require core creds. Mailjet only if emailing is enabled.
-stopifnot(SB_HOST != "", SB_URL != "", SB_STORAGE_KEY != "", OPENAI_KEY != "")
-if (SEND_EMAIL) stopifnot(MJ_API_KEY != "", MJ_API_SECRET != "", MAIL_FROM != "", MAIL_TO != "")
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-pandoc@v2
 
-# 3 ── LOAD DATA FROM SUPABASE ----------------------------------------------
-con <- DBI::dbConnect(
-  RPostgres::Postgres(),
-  host     = SB_HOST,
-  port     = SB_PORT,
-  dbname   = SB_DB,
-  user     = SB_USER,
-  password = SB_PWD,
-  sslmode  = "require"
-)
-on.exit(DBI::dbDisconnect(con), add = TRUE)
+      - name: Install headless Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
+          chrome-version: stable
 
-twitter_raw <- DBI::dbReadTable(con, "twitter_raw") |> as_tibble()
+      - name: Install Linux libraries
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            libcurl4-openssl-dev libssl-dev libxml2-dev \
+            libfontconfig1-dev libharfbuzz-dev libfribidi-dev \
+            libfreetype6-dev libpng-dev libtiff5-dev libjpeg-dev
 
-# ── ACCOUNT → CANONICAL-ID MAPPINGS ─────────────────────────────────────────
-main_ids <- tibble::tribble(
-  ~username,            ~main_id,
-  "weave_db",           "1206153294680403968",
-  "OdyseeTeam",         "1280241715987660801",
-  "ardriveapp",         "1293193263579635712",
-  "redstone_defi",      "1294053547630362630",
-  "everpay_io",         "1334504432973848577",
-  "decentlandlabs",     "1352388512788656136",
-  "KYVENetwork",        "136377177683878784",
-  "onlyarweave",        "1393171138436534272",
-  "ar_io_network",      "1468980765211955205",
-  "Permaswap",          "1496714415231717380",
-  "communitylabs",      "1548502833401516032",
-  "usewander",          "1559946771115163651",
-  "apus_network",       "1569621659468054528",
-  "fwdresearch",        "1573616135651545088",
-  "perma_dao",          "1595075970309857280",
-  "Copus_io",           "1610731228130312194",
-  "basejumpxyz",        "1612781645588742145",
-  "AnyoneFDN",          "1626376419268784130",
-  "arweaveindia",       "1670147900033343489",
-  "useload",            "1734941279379759105",
-  "protocolland",       "1737805485326401536",
-  "aoTheComputer",      "1750584639385939968",
-  "ArweaveOasis",       "1750723327315030016",
-  "aox_xyz",            "1751903735318720512",
-  "astrousd",           "1761104764899606528",
-  "PerplexFi",          "1775862139980226560",
-  "autonomous_af",      "1777500373378322432",
-  "Liquid_Ops",         "1795772412396507136",
-  "ar_aostore",         "1797632049202794496",
-  "FusionFiPro",        "1865790600462921728",
-  "vela_ventures",      "1869466343000444928",
-  "beaconwallet",       "1879152602681585664",
-  "VentoSwap",          "1889714966321893376",
-  "permawebjournal",    "1901592191065300993",
-  "Botega_AF",          "1902521779161292800",
-  "samecwilliams",      "409642632",
-  "TateBerenbaum",      "801518825690824707",
-  "ArweaveEco",         "892752981736779776",
-  "outprog_ar",         "2250655424",
-  "HyMatrixOrg",        "1948283615248568320",
-  "EverVisionLabs",     "1742119960535789568"
-)
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::tidyverse
+            any::lubridate
+            any::httr2
+            any::httr
+            any::jsonlite
+            any::glue
+            any::pagedown
+            any::RPostgres
+            any::DBI
+            any::base64enc
+            any::tidytext
 
-# 4 ── PRE-PROCESS TWEETS (last ~48 h) ---------------------------------------
-tweets <- twitter_raw |>
-  left_join(main_ids, by = "username") |>
-  mutate(
-    is_rt_text = str_detect(text, "^RT @"),
-    tweet_type = case_when(
-      is_rt_text                                                    ~ "retweet",
-      user_id == main_id & !is_rt_text & str_detect(text, "https://t.co") ~ "quote",
-      user_id == main_id                                            ~ "original",
-      TRUE                                                          ~ "other"
-    ),
-    publish_dt = lubridate::ymd_hms(date, tz = "UTC", quiet = TRUE),
-    text       = str_squish(text)
-  ) |>
-  filter(publish_dt >= Sys.time() - lubridate::ddays(2)) |>
-  distinct(tweet_id, .keep_all = TRUE)
+      - name: Run generate_report.R
+        run: Rscript generate_report.R
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
 
-df <- tweets |> filter(tweet_type == "original")
-
-# 5 ── DAILY REPORT CONTENT ---------------------------------------------------
-## 5.1 compact tweet lines
-tweet_lines <- df |>
-  mutate(
-    line = glue(
-      "{format(date, '%Y-%m-%d %H:%M')} | ",
-      "@{username} | ",
-      "ER={round(engagement_rate, 4)}% | ",
-      "{str_replace_all(str_trunc(text, 200), '\\n', ' ')} | ",
-      "{tweet_url}"
-    )
-  ) |>
-  pull(line)
-
-big_text <- paste(tweet_lines, collapse = "\n")
-
-## 5.2 GPT summary prompt
-headline_prompt <- glue(
-  "Below is a collection of tweets. Each line is\n",
-  "Date | Account | ER | Tweet text | URL.\n\n",
-  "Write bullet-point summaries of concrete product launches, events, ",
-  "or other activities **mentioned in the tweets**.\n\n",
-  "• Begin every bullet with the date **and the account in parentheses**.\n",
-  "  e.g. 2025-08-07 (@redstone_defi): …\n",
-  "• Then give a concise summary (≤ 20 words).\n",
-  "• End the bullet with the tweet’s URL in parentheses — place it once, ",
-  "  after the summary.\n",
-  "• Do NOT add any extra words around the URL (no “Link:”, no markdown).\n\n",
-  big_text
-)
-
-clean_gpt_output <- function(txt) {
-  # squash "(url (url))"
-  txt <- gsub("\\((https?://[^)\\s]+)\\s*\\(\\1\\)\\)", "(\\1)", txt, perl = TRUE)
-  # drop junk lines
-  keep <- function(l) {
-    l <- trimws(l)
-    !(l == "" || grepl("^https?://", l) || grepl("^\\(", l))
-  }
-  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
-  paste(lines[vapply(lines, keep, logical(1))], collapse = "\n")
-}
-
-raw <- ask_gpt(headline_prompt, max_tokens = 700)
-launches_summary <- clean_gpt_output(raw)
-
-# wrap URLs in angle brackets so pandoc makes links
-launches_summary <- gsub("\\((https?://[^)\\s]+)\\)", "(<\\1>)", launches_summary, perl = TRUE)
-launches_summary <- gsub("(?m)^\\s*(https?://\\S+)\\s*$", "(<\\1>)", launches_summary, perl = TRUE)
-launches_summary <- gsub("(https?://\\S+)$", "(<\\1>)", launches_summary, perl = TRUE)
-
-# 6 ── Markdown → PDF → Supabase --------------------------------------------
-writeLines(c(
-  "<style>",
-  "  a, a:visited, a.uri { color: #1a0dab !important; text-decoration: underline; }",
-  "</style>",
-  "",
-  "# Daily Twitter Report",
-  "",
-  "## Launches & Activities",
-  launches_summary
-), "summary.md")
-
-chrome_path <- Sys.getenv("CHROME_BIN", pagedown::find_chrome())
-
-# Markdown → HTML
-html_file <- tempfile(fileext = ".html")
-rmarkdown::pandoc_convert(
-  "summary.md",
-  to     = "html4",
-  from   = "markdown+tex_math_single_backslash",
-  output = html_file,
-  options = c("--standalone", "--section-divs", "--embed-resources",
-              "--variable", "bs3=TRUE", "--variable", "theme=bootstrap")
-)
-
-# HTML → PDF
-pagedown::chrome_print(
-  input      = html_file,
-  output     = "summary_full.pdf",
-  browser    = chrome_path,
-  extra_args = c("--headless=new", "--disable-gpu", "--no-sandbox")
-)
-if (!file.exists("summary_full.pdf"))
-  stop("❌ PDF not generated – summary_full.pdf missing")
-
-# Upload to Supabase
-object_path <- sprintf("%s/summary_%s.pdf",
-                       format(Sys.Date(), "%Yw%V"),
-                       format(Sys.time(), "%Y-%m-%d_%H-%M-%S"))
-upload_url <- sprintf("%s/storage/v1/object/%s/%s?upload=1",
-                      SB_URL, SB_BUCKET, object_path)
-
-httr2::request(upload_url) |>
-  httr2::req_method("POST") |>
-  httr2::req_headers(
-    Authorization  = sprintf("Bearer %s", SB_STORAGE_KEY),
-    `x-upsert`     = "true",
-    `Content-Type` = "application/pdf"
-  ) |>
-  httr2::req_body_file("summary_full.pdf") |>
-  httr2::req_perform() |>
-  httr2::resp_check_status()
-
-cat("✔ Uploaded PDF to Supabase:", object_path, "\n")
-
-# 7 ── Email via Mailjet (optional) ------------------------------------------
-if (SEND_EMAIL) {
-  from_email <- if (stringr::str_detect(MAIL_FROM, "<.+@.+>"))
-    stringr::str_remove_all(stringr::str_extract(MAIL_FROM, "<.+@.+>"), "[<>]")
-  else MAIL_FROM
-  from_name  <- if (stringr::str_detect(MAIL_FROM, "<.+@.+>"))
-    stringr::str_trim(stringr::str_remove(MAIL_FROM, "<.+@.+>$"))
-  else "Report Bot"
-
-  httr2::request("https://api.mailjet.com/v3.1/send") |>
-    httr2::req_auth_basic(MJ_API_KEY, MJ_API_SECRET) |>
-    httr2::req_body_json(list(
-      Messages = list(list(
-        From        = list(Email = from_email, Name = from_name),
-        To          = list(list(Email = MAIL_TO)),
-        Subject     = "Daily Twitter Report – Launches & Activities",
-        TextPart    = "Attached you'll find today's launch/activity summary.",
-        Attachments = list(list(
-          ContentType   = "application/pdf",
-          Filename      = "daily_report.pdf",
-          Base64Content = base64enc::base64encode("summary_full.pdf")
-        ))
-      ))
-    )) |>
-    httr2::req_perform() |>
-    httr2::resp_check_status()
-
-  cat("📧  Report emailed via Mailjet\n")
-} else {
-  cat("↪ Skipping email step (SEND_EMAIL=false). Report generated & uploaded only.\n")
-}
-
+      - name: Upload report artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-artifacts
+          path: |
+            summary.md
+            summary_full.pdf
+          if-no-files-found: warn
