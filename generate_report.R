@@ -70,7 +70,8 @@ SB_URL         <- sub("/+$","", trim_env("SUPABASE_URL"))         # normalize
 SB_STORAGE_KEY <- trim_env("SUPABASE_SERVICE_ROLE")
 SB_BUCKET      <- trim_env("SB_BUCKET", "daily-reports")
 
-OPENAI_KEY     <- trim_env("OPENAI_API_KEY")
+OPENAI_KEY <- trim_env("OPENAI_API_KEY")
+if (!nzchar(OPENAI_KEY)) stop("OPENAI_API_KEY is missing in env")
 
 MJ_API_KEY     <- trim_env("MJ_API_KEY")
 MJ_API_SECRET  <- trim_env("MJ_API_SECRET")
